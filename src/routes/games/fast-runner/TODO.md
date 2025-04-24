@@ -2,8 +2,6 @@
 
 ## Phase 1: Planning & Setup
 
--   [ ] **Orchestrator:** Create this TODO.md file. (Done)
--   [ ] **Architect:** Design initial level layout concepts, core mechanics (movement, jumping, collecting items, obstacles), and overall game flow. Document findings in `DESIGN.md`.
 -   [ ] **Code:** Set up the basic Svelte 5 component structure in `src/routes/games/fast-runner/+page.svelte` to host the Phaser game canvas.
 -   [ ] **Code:** Initialize a basic Phaser 3 instance within the Svelte component. Ensure a blank canvas renders.
 

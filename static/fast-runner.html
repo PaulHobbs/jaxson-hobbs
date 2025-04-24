@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phasor Fast Runner</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #222;
+        }
+        canvas {
+            border: 1px solid white;
+        }
+    </style>
+</head>
+<body>
+
+<script>
+// Mermaid Diagram (as comment)
+/*
+graph TD
+    A[Start Level] --> B{Navigate Level};
+    B --> C[Collect Rings];
+    B --> D[Avoid Obstacles];
+    B --> E[Reach End Point];
+    C --> B;
+    D --> B;
+    E --> F[Level Complete];
+*/
+
+const SCREEN_WIDTH = 800;
+const SCREEN_HEIGHT = 600;
+const PLAYER_SPEED = 280; // Base auto-run speed
+const JUMP_VELOCITY = -650;
+const GRAVITY = 800;
+
+class GameScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'GameScene' });
+        this.player = null;
+        this.platforms = null;
+        this.rings = null;
+        this.spikes = null;
+        this.movingPlatforms = null;
+        this.goal = null;
+        this.cursors = null;
+        this.score = 0;
+        this.scoreText = null;
+        this.gameOver = false;
+        this.gameOverText = null;
+        this.levelComplete = false;
+    }
+
+    // No preload needed as we are generating graphics dynamically
+
+    create() {
+        this.gameOver = false;
+        this.levelComplete = false;
+        this.score = 0;
+
+        // World Bounds - Make the level wider than the screen
+        this.physics.world.setBounds(0, 0, 5000, SCREEN_HEIGHT);
+
+        // Background color
+        this.cameras.main.setBackgroundColor('#87CEEB'); // Sky blue
+
+        // --- Level Creation ---
+        this.platforms = this.physics.add.staticGroup();
+        this.rings = this.physics.add.group({ allowGravity: false }); // Use dynamic group for easier creation loop
+        this.spikes = this.physics.add.staticGroup();
+        this.movingPlatforms = this.physics.add.group({
+            allowGravity: false,
+            immovable: true, // Important for player interaction
+            key: 'platform', // We'll generate a texture for this
+            frameQuantity: 2 // Create 2 moving platforms
+        });
+
+        // Generate simple textures
+        this.generateTextures();
+
+        // Create the ground and platforms (Concept 1 & 2 elements)
+        // Ground
+        for (let x = 0; x < 5000; x += 70) {
+             this.platforms.create(x, SCREEN_HEIGHT - 35, 'platform').setOrigin(0,0).refreshBody();
+        }
+         // Remove some ground sections to create gaps
+        this.platforms.getChildren()[10].disableBody(true, true);
+        this.platforms.getChildren()[11].disableBody(true, true);
+        this.platforms.getChildren()[30].disableBody(true, true);
+        this.platforms.getChildren()[31].disableBody(true, true);
+        this.platforms.getChildren()[32].disableBody(true, true);
+        this.platforms.getChildren()[55].disableBody(true, true);
+
+        // Rolling Hills / Slopes (simulated with steps)
+        this.createPlatformSection(600, 500, 5); // Uphill slope
+        this.createPlatformSection(1000, 450, 3); // Small hill top
+        this.createPlatformSection(1210, 500, 5); // Downhill slope
+
+        // Verticality / Multiple Paths
+        this.createPlatformSection(1800, 400, 6); // High platform
+        this.createPlatformSection(2500, 300, 4); // Higher platform (riskier?)
+
+        // Add some floating platforms
+        this.platforms.create(3000, 450, 'platform');
+        this.platforms.create(3200, 350, 'platform');
+        this.platforms.create(3400, 450, 'platform');
+
+        // --- Player ---
+        this.player = this.physics.add.sprite(100, SCREEN_HEIGHT - 150, 'player');
+        this.player.setBounce(0.1);
+        this.player.setCollideWorldBounds(true);
+        this.player.body.setGravityY(GRAVITY);
+        this.player.body.setSize(30, 48); // Adjust physics body size if needed
+
+        // --- Collectibles (Rings) ---
+        // Place rings strategically
+        this.createRing(300, 500);
+        this.createRing(350, 500);
+        this.createRing(700, 450); // On slope
+        this.createRing(750, 450);
+        this.createRing(1100, 400); // Hill top
+        this.createRing(1900, 350); // High path
+        this.createRing(2000, 350);
+        this.createRing(2100, 350);
+        this.createRing(2600, 250); // Higher path
+        this.createRing(2700, 250);
+        this.createRing(3000, 400); // Floating platforms area
+        this.createRing(3200, 300);
+        this.createRing(3400, 400);
+        this.createRing(4000, 500);
+        this.createRing(4100, 500);
+        this.createRing(4200, 500);
+
+        // --- Obstacles (Spikes) ---
+        this.createSpike(910, SCREEN_HEIGHT - 70); // Bottom path after first slope
+        this.createSpike(2300, SCREEN_HEIGHT - 70); // Bottom path under high platform
+        this.createSpike(2850, SCREEN_HEIGHT - 70);
+        this.createSpike(3800, SCREEN_HEIGHT - 70);
+        this.createSpike(3835, SCREEN_HEIGHT - 70);
+
+        // --- Moving Platforms ---
+        let mp1 = this.movingPlatforms.getChildren()[0];
+        mp1.setPosition(1400, 350);
+        mp1.body.velocity.x = 80; // Move right
+        mp1.setData('startX', 1400);
+        mp1.setData('endX', 1700);
+
+        let mp2 = this.movingPlatforms.getChildren()[1];
+        mp2.setPosition(4400, 400);
+        mp2.body.velocity.x = -60; // Move left
+        mp2.setData('startX', 4100);
+        mp2.setData('endX', 4400);
+
+        // --- Goal ---
+        this.goal = this.physics.add.sprite(4850, SCREEN_HEIGHT - 150, 'goal');
+        this.goal.body.allowGravity = false;
+        this.goal.setVisible(true); // Make it visible for clarity
+
+        // --- Physics Collisions ---
+        this.physics.add.collider(this.player, this.platforms);
+        this.physics.add.collider(this.player, this.movingPlatforms);
+        // Need separate colliders for static groups if they have different callbacks
+        this.physics.add.collider(this.spikes, this.platforms); // Spikes sit on platforms
+
+        // --- Physics Overlaps (Triggers) ---
+        this.physics.add.overlap(this.player, this.rings, this.collectRing, null, this);
+        this.physics.add.overlap(this.player, this.spikes, this.hitSpike, null, this);
+        this.physics.add.overlap(this.player, this.goal, this.reachGoal, null, this);
+
+        // --- Input ---
+        this.cursors = this.input.keyboard.createCursorKeys();
+
+        // --- Camera ---
+        this.cameras.main.startFollow(this.player, true, 0.1, 0); // Follow player horizontally mostly
+        this.cameras.main.setBounds(0, 0, 5000, SCREEN_HEIGHT);
+
+        // --- UI ---
+        this.scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '32px', fill: '#FFF', stroke: '#000', strokeThickness: 4 })
+            .setScrollFactor(0); // Keep UI fixed on screen
+
+        this.gameOverText = this.add.text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, '', { fontSize: '64px', fill: '#F00', stroke: '#000', strokeThickness: 6 })
+            .setOrigin(0.5)
+            .setScrollFactor(0)
+            .setDepth(100); // Ensure it's on top
+
+        // --- Initial Player State ---
+        this.player.setVelocityX(PLAYER_SPEED); // Start running automatically
+    }
+
+    update() {
+        if (this.gameOver) {
+            return; // Stop updates if game is over
+        }
+
+        // --- Player Movement ---
+        const onGround = this.player.body.blocked.down || this.player.body.touching.down;
+        let targetVelocityX = PLAYER_SPEED; // Default auto-run speed
+
+        // Left/Right adjustments (more direct control than slight speed change)
+        if (this.cursors.left.isDown) {
+            targetVelocityX = -PLAYER_SPEED * 0.75; // Move left, slightly slower
+             this.player.flipX = true; // Flip sprite left
+        } else if (this.cursors.right.isDown) {
+            targetVelocityX = PLAYER_SPEED * 1.25; // Move right slightly faster
+             this.player.flipX = false; // Face right
+        } else {
+            // Maintain auto-run speed if no left/right input
+            targetVelocityX = PLAYER_SPEED;
+             this.player.flipX = false; // Face right (default direction)
+        }
+
+        this.player.setVelocityX(targetVelocityX);
+
+        // Jumping
+        if (this.cursors.up.isDown && onGround) {
+            this.player.setVelocityY(JUMP_VELOCITY);
+        }
+
+        // Limited air control (optional, can make game feel better)
+        // If you want air control, you might adjust acceleration instead of velocity directly
+        // Example:
+        if (!onGround) {
+            if (this.cursors.left.isDown) {
+                this.player.setAccelerationX(-300);
+            } else if (this.cursors.right.isDown) {
+                this.player.setAccelerationX(300);
+            } else {
+                this.player.setAccelerationX(0);
+            }
+        } else {
+            this.player.setAccelerationX(0); // No acceleration control on ground
+        }
+
+
+        // --- Moving Platforms Update ---
+        this.movingPlatforms.getChildren().forEach(platform => {
+            const startX = platform.getData('startX');
+            const endX = platform.getData('endX');
+
+            if (platform.body.velocity.x > 0 && platform.x >= endX) { // Moving right, hit end
+                platform.body.velocity.x *= -1; // Reverse direction
+                platform.x = endX; // Clamp position
+            } else if (platform.body.velocity.x < 0 && platform.x <= startX) { // Moving left, hit start
+                platform.body.velocity.x *= -1; // Reverse direction
+                platform.x = startX; // Clamp position
+            }
+        });
+
+        // --- Check Fall ---
+        if (this.player.y > SCREEN_HEIGHT + 50) { // Player fell off screen
+            this.triggerGameOver('Fell off the level!');
+        }
+    }
+
+    // --- Helper Functions ---
+
+    generateTextures() {
+        // Simple Player (Blue Rectangle)
+        let playerGraphics = this.make.graphics({ fillStyle: { color: 0x0000ff } });
+        playerGraphics.fillRect(0, 0, 40, 50);
+        playerGraphics.generateTexture('player', 40, 50);
+        playerGraphics.destroy();
+
+        // Simple Platform (Brown Rectangle)
+        let platformGraphics = this.make.graphics({ fillStyle: { color: 0x8B4513 } }); // Brown color
+        platformGraphics.fillRect(0, 0, 70, 70); // Platform tile size
+        platformGraphics.generateTexture('platform', 70, 70);
+        platformGraphics.destroy();
+
+        // Simple Ring (Yellow Circle)
+        let ringGraphics = this.make.graphics({ fillStyle: { color: 0xffff00 } }); // Yellow color
+        ringGraphics.fillCircle(15, 15, 15); // Radius 15, size 30x30
+        ringGraphics.generateTexture('ring', 30, 30);
+        ringGraphics.destroy();
+
+        // Simple Spike (Red Triangle)
+        let spikeGraphics = this.make.graphics({ fillStyle: { color: 0xff0000 } }); // Red color
+        spikeGraphics.beginPath();
+        spikeGraphics.moveTo(0, 35);
+        spikeGraphics.lineTo(17.5, 0); // Midpoint top
+        spikeGraphics.lineTo(35, 35); // Bottom right
+        spikeGraphics.closePath();
+        spikeGraphics.fillPath();
+        spikeGraphics.generateTexture('spike', 35, 35);
+        spikeGraphics.destroy();
+
+         // Simple Goal (Green Check or Flagpole base)
+        let goalGraphics = this.make.graphics({ fillStyle: { color: 0x00ff00 } }); // Green color
+        goalGraphics.fillRect(0, 0, 20, 100); // Flagpole base
+        goalGraphics.generateTexture('goal', 20, 100);
+        goalGraphics.destroy();
+    }
+
+    createPlatformSection(startX, y, length) {
+        for (let i = 0; i < length; i++) {
+            this.platforms.create(startX + i * 70, y, 'platform').setOrigin(0,0).refreshBody();
+        }
+    }
+
+     createRing(x, y) {
+        // Rings don't need physics body enabled initially, overlap handles it.
+        // Using a dynamic group allows easy iteration if needed, but static would also work.
+        let ring = this.rings.create(x, y, 'ring');
+        // Optional: Add a small tween for visual appeal
+         this.tweens.add({
+             targets: ring,
+             y: y - 5, // Bob up and down
+             duration: 500,
+             ease: 'Sine.easeInOut',
+             yoyo: true,
+             repeat: -1
+         });
+    }
+
+    createSpike(x, y) {
+        // Spikes are static hazards
+        this.spikes.create(x, y, 'spike').setOrigin(0,1).refreshBody(); // Origin bottom-left for easy placement
+    }
+
+    collectRing(player, ring) {
+        ring.disableBody(true, true); // Remove ring
+        this.score += 10;
+        this.scoreText.setText('Score: ' + this.score);
+        // Optional: Add sound effect here
+        // this.sound.play('ringSound');
+    }
+
+    hitSpike(player, spike) {
+        this.triggerGameOver('Hit an obstacle!');
+    }
+
+    reachGoal(player, goal) {
+        if (!this.levelComplete) { // Prevent multiple triggers
+            this.levelComplete = true;
+            this.gameOver = true; // Stop player control etc.
+            this.player.setVelocity(0, 0); // Stop the player
+            this.player.setAcceleration(0, 0);
+            this.gameOverText.setText('Level Complete!\nScore: ' + this.score + '\n(Reload to play again)');
+            this.gameOverText.setFill('#0F0'); // Green for win
+            // In a multi-level game, you'd transition here: this.scene.start('NextLevelScene');
+            // For single level, we just stop.
+        }
+    }
+
+    triggerGameOver(message) {
+        if (!this.gameOver) { // Prevent multiple triggers
+            this.gameOver = true;
+            this.physics.pause(); // Stop physics simulation
+            this.player.setTint(0xff0000); // Turn player red
+            this.player.anims.stop(); // Stop animations if any were added
+
+            this.gameOverText.setText('Game Over!\n' + message + '\n(Reload to play again)');
+            this.gameOverText.setFill('#F00'); // Red for lose
+
+            // Option 1: Reload the page entirely for a simple restart
+            // setTimeout(() => { window.location.reload(); }, 2000);
+
+            // Option 2: Restart the scene (better, keeps Phaser running)
+            // this.time.delayedCall(2000, () => {
+            //     this.scene.restart();
+            // });
+             // For now, just display message and let user reload manually.
+        }
+    }
+}
+
+// Phaser Game Configuration
+const config = {
+    type: Phaser.AUTO, // Use WebGL if available, otherwise Canvas
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { y: GRAVITY },
+            debug: false // Set to true to see physics bodies
+        }
+    },
+    scene: [GameScene] // Add our scene to the game
+};
+
+// Create the Phaser game instance
+const game = new Phaser.Game(config);
+
+</script>
+
+</body>
+</html>
