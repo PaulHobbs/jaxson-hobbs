@@ -20,7 +20,7 @@
 -   [ ] **Code:** Implement basic obstacles or enemies.
 -   [ ] **Code:** Add scoring or a timer.
 -   [ ] **Code:** Implement parallax background scrolling.
--   [ ] **Code:** Add sound effects and background music.
+-   [~] **Code:** Add sound effects and background music. (Retry)
 -   [ ] **Code:** Refine controls and game feel.
 
 ## Phase 4: Testing & Refinement
