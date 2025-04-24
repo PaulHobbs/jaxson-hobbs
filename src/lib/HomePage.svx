@@ -19,3 +19,11 @@ My interests are:
 I have a brother, [Julian](https://julian.hobbs.page).
 
 My dad is [Paul Hobbs](https://paul.hobbs.page) and my Opa is [Ben Hobbs](https://hobbsgroup.johnshopkins.edu/members.html).
+
+## Web Games
+
+I like making games with my dad using AI chat.
+
+Here's the first game we're making:
+
+- [FastRunner](/games/fast-runner)
