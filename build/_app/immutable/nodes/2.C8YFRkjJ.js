@@ -1,0 +1,1 @@
+import{t as o,a}from"../chunks/BrlRvMJm.js";import"../chunks/CLb0Wg_W.js";import{n as t}from"../chunks/CIuKuh2F.js";var n=o("<h1>Jaxson Hobbs’s website</h1> <p>Hi, I’m Jaxson.</p> <p>My interests are:</p> <ul><li>Legos</li> <li>Minecraft</li> <li>Spiderman</li> <li>Sonic</li></ul>",1);function p(i){var e=n();t(6),a(i,e)}function m(i){p(i)}export{m as component};
