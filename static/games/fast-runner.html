@@ -36,7 +36,7 @@ graph TD
 
 const SCREEN_WIDTH = 800;
 const SCREEN_HEIGHT = 600;
-const PLAYER_SPEED = 280; // Base auto-run speed
+const PLAYER_SPEED = 480; // Base auto-run speed
 const JUMP_VELOCITY = -650;
 const GRAVITY = 800;
 
@@ -55,6 +55,8 @@ class GameScene extends Phaser.Scene {
         this.gameOver = false;
         this.gameOverText = null;
         this.levelComplete = false;
+        this.jumpCount = 0; // Add jump count
+        this.wasUpPressedLastFrame = false; // Track previous up key state
     }
 
     // No preload needed as we are generating graphics dynamically
@@ -63,6 +65,7 @@ class GameScene extends Phaser.Scene {
         this.gameOver = false;
         this.levelComplete = false;
         this.score = 0;
+        this.jumpCount = 0; // Reset jump count on level start
 
         // World Bounds - Make the level wider than the screen
         this.physics.world.setBounds(0, 0, 5000, SCREEN_HEIGHT);
@@ -218,9 +221,24 @@ class GameScene extends Phaser.Scene {
         this.player.setVelocityX(targetVelocityX);
 
         // Jumping
-        if (this.cursors.up.isDown && onGround) {
+        const isUpJustPressed = this.cursors.up.isDown && !this.wasUpPressedLastFrame;
+
+        if (isUpJustPressed && (onGround || this.jumpCount < 2)) {
+            if (onGround) {
+                this.jumpCount = 1;
+            } else {
+                this.jumpCount++;
+            }
             this.player.setVelocityY(JUMP_VELOCITY);
         }
+
+        // Reset jump count when on ground
+        if (onGround) {
+            this.jumpCount = 0;
+        }
+
+        // Update previous key state
+        this.wasUpPressedLastFrame = this.cursors.up.isDown;
 
         // Limited air control (optional, can make game feel better)
         // If you want air control, you might adjust acceleration instead of velocity directly
