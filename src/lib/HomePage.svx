@@ -27,6 +27,7 @@ I like making games with my dad using AI chat.
 Here's the first game we're making:
 
 - [FastRunner](/games/fast-runner.html)
+- [Lizard Laboratory](/games/lizard-lab.html)
 
 
 ## Art
