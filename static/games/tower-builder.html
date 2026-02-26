@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Builder!</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: linear-gradient(180deg, #87CEEB 0%, #E0F0FF 60%, #90EE90 60%, #228B22 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow-x: hidden;
+            user-select: none;
+        }
+
+        /* Clouds */
+        .cloud {
+            position: fixed;
+            background: white;
+            border-radius: 50px;
+            opacity: 0.8;
+            z-index: 0;
+            animation: floatCloud linear infinite;
+        }
+        .cloud::before, .cloud::after {
+            content: '';
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+        }
+        .cloud::before { width: 60%; height: 120%; top: -50%; left: 20%; }
+        .cloud::after { width: 40%; height: 100%; top: -30%; left: 55%; }
+
+        @keyframes floatCloud {
+            from { transform: translateX(-200px); }
+            to { transform: translateX(calc(100vw + 200px)); }
+        }
+
+        /* Title Screen */
+        #title-screen {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            background: linear-gradient(180deg, #FF6B6B 0%, #FFE66D 50%, #4ECDC4 100%);
+        }
+        #title-screen h1 {
+            font-size: 4em;
+            color: white;
+            text-shadow: 4px 4px 0 #333, -2px -2px 0 #333;
+            margin-bottom: 10px;
+            animation: bounce 1s ease infinite;
+        }
+        #title-screen .subtitle {
+            font-size: 1.3em;
+            color: #333;
+            margin-bottom: 40px;
+            font-weight: bold;
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+        }
+        .title-tower {
+            font-size: 80px;
+            margin-bottom: 20px;
+        }
+        .play-btn {
+            font-size: 2em;
+            padding: 15px 60px;
+            background: #FF6B6B;
+            color: white;
+            border: 4px solid #333;
+            border-radius: 15px;
+            cursor: pointer;
+            font-weight: bold;
+            text-shadow: 2px 2px 0 #333;
+            transition: transform 0.1s, box-shadow 0.1s;
+            box-shadow: 0 6px 0 #c0392b;
+        }
+        .play-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 9px 0 #c0392b;
+        }
+        .play-btn:active {
+            transform: translateY(3px);
+            box-shadow: 0 2px 0 #c0392b;
+        }
+
+        /* Character Select */
+        #char-select {
+            position: fixed;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            background: linear-gradient(180deg, #A18CD1 0%, #FBC2EB 100%);
+        }
+        #char-select h2 {
+            font-size: 2.5em;
+            color: white;
+            text-shadow: 3px 3px 0 #333;
+            margin-bottom: 30px;
+        }
+        .char-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            max-width: 600px;
+        }
+        .char-option {
+            background: white;
+            border: 4px solid #333;
+            border-radius: 15px;
+            padding: 20px;
+            cursor: pointer;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 0 #999;
+        }
+        .char-option:hover {
+            transform: translateY(-5px) scale(1.05);
+            box-shadow: 0 8px 0 #999;
+        }
+        .char-option .char-emoji {
+            font-size: 60px;
+            display: block;
+            margin-bottom: 8px;
+        }
+        .char-option .char-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #333;
+        }
+
+        /* Game UI */
+        #game-ui {
+            display: none;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Top bar */
+        .top-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 50;
+            font-size: 1.2em;
+        }
+        .coins { color: #FFD700; font-weight: bold; }
+
+        /* Tower area */
+        .tower-container {
+            display: flex;
+            flex-direction: column-reverse;
+            align-items: center;
+            min-height: 100vh;
+            padding-bottom: 80px;
+            padding-top: 60px;
+        }
+
+        /* Ground */
+        .ground {
+            width: 100%;
+            height: 80px;
+            background: linear-gradient(0deg, #228B22, #32CD32);
+            position: fixed;
+            bottom: 0;
+            z-index: 5;
+        }
+        .ground::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: 0;
+            right: 0;
+            height: 20px;
+            background: repeating-linear-gradient(90deg, transparent, transparent 30px, #228B22 30px, #228B22 32px);
+        }
+
+        /* Floor */
+        .floor {
+            width: 320px;
+            min-height: 120px;
+            background: #F5E6CA;
+            border: 3px solid #8B7355;
+            border-radius: 5px;
+            position: relative;
+            margin-bottom: -3px;
+            transition: transform 0.3s;
+            cursor: pointer;
+        }
+        .floor:hover {
+            transform: scale(1.02);
+        }
+        .floor-number {
+            position: absolute;
+            top: 5px;
+            left: 10px;
+            font-size: 0.8em;
+            color: #8B7355;
+            font-weight: bold;
+        }
+
+        /* Floor interior */
+        .floor-interior {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 8px;
+            padding: 25px 10px 10px;
+            min-height: 120px;
+            flex-wrap: wrap;
+        }
+
+        /* Furniture items */
+        .furniture-item {
+            font-size: 32px;
+            cursor: grab;
+            transition: transform 0.2s;
+            position: relative;
+        }
+        .furniture-item:hover {
+            transform: scale(1.3);
+        }
+
+        /* Character in tower */
+        .resident {
+            font-size: 28px;
+            animation: residentBob 2s ease-in-out infinite;
+        }
+        @keyframes residentBob {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        /* Roof */
+        .roof {
+            width: 0;
+            height: 0;
+            border-left: 180px solid transparent;
+            border-right: 180px solid transparent;
+            border-bottom: 80px solid #C0392B;
+            position: relative;
+            margin-bottom: -3px;
+        }
+        .roof::after {
+            content: '🚩';
+            position: absolute;
+            top: -30px;
+            left: -10px;
+            font-size: 30px;
+        }
+
+        /* Windows on floors */
+        .window {
+            position: absolute;
+            width: 30px;
+            height: 40px;
+            background: linear-gradient(135deg, #87CEEB, #5DADE2);
+            border: 3px solid #8B7355;
+            border-radius: 3px 3px 0 0;
+            top: 15px;
+        }
+        .window.left { left: 15px; }
+        .window.right { right: 15px; }
+        .window .curtain {
+            position: absolute;
+            top: 0;
+            width: 50%;
+            height: 60%;
+            background: #E74C3C;
+        }
+        .window .curtain.l { left: 0; border-radius: 0 0 50% 0; }
+        .window .curtain.r { right: 0; border-radius: 0 0 0 50%; }
+
+        /* Bottom toolbar */
+        .toolbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(0deg, #2C3E50, #34495E);
+            padding: 10px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            z-index: 50;
+            flex-wrap: wrap;
+        }
+        .tool-btn {
+            padding: 8px 18px;
+            font-size: 1.1em;
+            border: 3px solid #555;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.1s, box-shadow 0.1s;
+            box-shadow: 0 4px 0 rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tool-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 0 rgba(0,0,0,0.3);
+        }
+        .tool-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 0 rgba(0,0,0,0.3);
+        }
+        .btn-build { background: #E67E22; color: white; }
+        .btn-furniture { background: #9B59B6; color: white; }
+        .btn-paint { background: #2ECC71; color: white; }
+        .btn-destroy { background: #E74C3C; color: white; }
+        .btn-save { background: #3498DB; color: white; }
+
+        /* Furniture shop */
+        #furniture-shop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+        }
+        .shop-panel {
+            background: #FFF8DC;
+            border: 4px solid #8B4513;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .shop-panel h2 {
+            text-align: center;
+            color: #8B4513;
+            margin-bottom: 5px;
+            font-size: 1.8em;
+        }
+        .shop-subtitle {
+            text-align: center;
+            color: #A0522D;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+        .shop-category {
+            margin-bottom: 15px;
+        }
+        .shop-category h3 {
+            color: #8B4513;
+            margin-bottom: 8px;
+            border-bottom: 2px solid #DEB887;
+            padding-bottom: 4px;
+        }
+        .shop-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .shop-item {
+            font-size: 32px;
+            padding: 8px 12px;
+            background: white;
+            border: 2px solid #DEB887;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            text-align: center;
+            min-width: 56px;
+        }
+        .shop-item:hover {
+            transform: scale(1.2);
+            background: #FFFACD;
+        }
+        .shop-item .price {
+            font-size: 10px;
+            display: block;
+            color: #DAA520;
+            font-weight: bold;
+        }
+        .shop-close {
+            display: block;
+            margin: 20px auto 0;
+            padding: 10px 40px;
+            font-size: 1.2em;
+            background: #E74C3C;
+            color: white;
+            border: 3px solid #333;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        /* Paint shop */
+        #paint-shop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+        }
+        .paint-panel {
+            background: white;
+            border: 4px solid #333;
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+        }
+        .paint-panel h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .paint-colors {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .paint-swatch {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .paint-swatch:hover { transform: scale(1.2); }
+        .paint-info {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        /* Destroy mode */
+        .destroy-mode .floor:hover {
+            background: #FFCCCC !important;
+            border-color: #E74C3C !important;
+        }
+        .destroy-mode .furniture-item:hover {
+            transform: scale(1.3) rotate(10deg);
+            filter: brightness(0.5) sepia(1) hue-rotate(-50deg) saturate(5);
+        }
+
+        /* Celebration */
+        .celebration {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 3em;
+            font-weight: bold;
+            color: #FFD700;
+            text-shadow: 3px 3px 0 #333;
+            z-index: 300;
+            animation: celebPop 1.5s ease-out forwards;
+            pointer-events: none;
+        }
+        @keyframes celebPop {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+            50% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+
+        /* Sparkles */
+        .sparkle {
+            position: fixed;
+            font-size: 20px;
+            pointer-events: none;
+            z-index: 300;
+            animation: sparkleFloat 1s ease-out forwards;
+        }
+        @keyframes sparkleFloat {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-80px) scale(0); opacity: 0; }
+        }
+
+        /* Floor color themes */
+        .floor-cream { background: #F5E6CA; }
+        .floor-pink { background: #FFD1DC; }
+        .floor-blue { background: #D1E8FF; }
+        .floor-green { background: #D1FFD1; }
+        .floor-yellow { background: #FFFACD; }
+        .floor-purple { background: #E8D1FF; }
+        .floor-orange { background: #FFE0CC; }
+        .floor-white { background: #FFFFFF; }
+
+        /* Responsive */
+        @media (max-width: 400px) {
+            .floor { width: 280px; }
+            .roof {
+                border-left-width: 155px;
+                border-right-width: 155px;
+            }
+            #title-screen h1 { font-size: 2.5em; }
+            .char-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+            .tool-btn { padding: 6px 12px; font-size: 0.95em; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- TITLE SCREEN -->
+<div id="title-screen">
+    <div class="title-tower">🏗️</div>
+    <h1>Tower Builder!</h1>
+    <p class="subtitle">Designed by Jax</p>
+    <br>
+    <button class="play-btn" onclick="showCharSelect()">PLAY!</button>
+</div>
+
+<!-- CHARACTER SELECT -->
+<div id="char-select">
+    <h2>Select Your Character!</h2>
+    <div class="char-grid">
+        <div class="char-option" onclick="selectChar('🧑‍🚀', 'Astronaut')">
+            <span class="char-emoji">🧑‍🚀</span>
+            <span class="char-name">Astronaut</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🧙‍♂️', 'Wizard')">
+            <span class="char-emoji">🧙‍♂️</span>
+            <span class="char-name">Wizard</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🤖', 'Robot')">
+            <span class="char-emoji">🤖</span>
+            <span class="char-name">Robot</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🦸', 'Hero')">
+            <span class="char-emoji">🦸</span>
+            <span class="char-name">Hero</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🐱', 'Cat')">
+            <span class="char-emoji">🐱</span>
+            <span class="char-name">Cat</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🦖', 'Dino')">
+            <span class="char-emoji">🦖</span>
+            <span class="char-name">Dino</span>
+        </div>
+        <div class="char-option" onclick="selectChar('👽', 'Alien')">
+            <span class="char-emoji">👽</span>
+            <span class="char-name">Alien</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🐸', 'Frog')">
+            <span class="char-emoji">🐸</span>
+            <span class="char-name">Frog</span>
+        </div>
+        <div class="char-option" onclick="selectChar('🧛', 'Vampire')">
+            <span class="char-emoji">🧛</span>
+            <span class="char-name">Vampire</span>
+        </div>
+    </div>
+</div>
+
+<!-- FURNITURE SHOP -->
+<div id="furniture-shop">
+    <div class="shop-panel">
+        <h2>🛋️ Furniture Shop</h2>
+        <p class="shop-subtitle">Click a floor first, then pick furniture!</p>
+        <div id="shop-floor-info" style="text-align:center; margin-bottom:15px; font-weight:bold; color:#E67E22;"></div>
+
+        <div class="shop-category">
+            <h3>🛋️ Living Room</h3>
+            <div class="shop-items">
+                <div class="shop-item" onclick="buyFurniture('🛋️')">🛋️<span class="price">5 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('📺')">📺<span class="price">8 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🪴')">🪴<span class="price">2 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🖼️')">🖼️<span class="price">4 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🕯️')">🕯️<span class="price">2 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('📚')">📚<span class="price">3 🪙</span></div>
+            </div>
+        </div>
+
+        <div class="shop-category">
+            <h3>🛏️ Bedroom</h3>
+            <div class="shop-items">
+                <div class="shop-item" onclick="buyFurniture('🛏️')">🛏️<span class="price">6 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🧸')">🧸<span class="price">3 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('💡')">💡<span class="price">3 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🪞')">🪞<span class="price">4 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('⏰')">⏰<span class="price">2 🪙</span></div>
+            </div>
+        </div>
+
+        <div class="shop-category">
+            <h3>🍳 Kitchen</h3>
+            <div class="shop-items">
+                <div class="shop-item" onclick="buyFurniture('🍳')">🍳<span class="price">4 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🧁')">🧁<span class="price">2 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('☕')">☕<span class="price">2 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🍕')">🍕<span class="price">3 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🧊')">🧊<span class="price">5 🪙</span></div>
+            </div>
+        </div>
+
+        <div class="shop-category">
+            <h3>🎮 Fun Stuff</h3>
+            <div class="shop-items">
+                <div class="shop-item" onclick="buyFurniture('🎮')">🎮<span class="price">7 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🎸')">🎸<span class="price">6 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🏆')">🏆<span class="price">10 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🎨')">🎨<span class="price">5 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🔭')">🔭<span class="price">8 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🎪')">🎪<span class="price">9 🪙</span></div>
+            </div>
+        </div>
+
+        <div class="shop-category">
+            <h3>🐾 Pets</h3>
+            <div class="shop-items">
+                <div class="shop-item" onclick="buyFurniture('🐕')">🐕<span class="price">8 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🐈')">🐈<span class="price">8 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🐹')">🐹<span class="price">5 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🦜')">🦜<span class="price">6 🪙</span></div>
+                <div class="shop-item" onclick="buyFurniture('🐟')">🐟<span class="price">4 🪙</span></div>
+            </div>
+        </div>
+
+        <button class="shop-close" onclick="closeShop()">Done!</button>
+    </div>
+</div>
+
+<!-- PAINT SHOP -->
+<div id="paint-shop">
+    <div class="paint-panel">
+        <h2>🎨 Paint a Floor!</h2>
+        <p class="paint-info">Click a floor, then pick a color</p>
+        <div id="paint-floor-info" style="margin-bottom:15px; font-weight:bold; color:#E67E22;"></div>
+        <div class="paint-colors">
+            <div class="paint-swatch" style="background:#F5E6CA" onclick="paintFloor('floor-cream')"></div>
+            <div class="paint-swatch" style="background:#FFD1DC" onclick="paintFloor('floor-pink')"></div>
+            <div class="paint-swatch" style="background:#D1E8FF" onclick="paintFloor('floor-blue')"></div>
+            <div class="paint-swatch" style="background:#D1FFD1" onclick="paintFloor('floor-green')"></div>
+            <div class="paint-swatch" style="background:#FFFACD" onclick="paintFloor('floor-yellow')"></div>
+            <div class="paint-swatch" style="background:#E8D1FF" onclick="paintFloor('floor-purple')"></div>
+            <div class="paint-swatch" style="background:#FFE0CC" onclick="paintFloor('floor-orange')"></div>
+            <div class="paint-swatch" style="background:#FFFFFF" onclick="paintFloor('floor-white')"></div>
+        </div>
+        <button class="shop-close" onclick="closePaint()">Done!</button>
+    </div>
+</div>
+
+<!-- GAME UI -->
+<div id="game-ui">
+    <div class="top-bar">
+        <span id="char-display"></span>
+        <span class="coins" id="coins-display">🪙 50</span>
+        <span id="floor-count">Floors: 1</span>
+    </div>
+
+    <div class="ground"></div>
+
+    <div class="tower-container" id="tower-container">
+        <!-- Tower floors get added here -->
+    </div>
+
+    <div class="toolbar">
+        <button class="tool-btn btn-build" onclick="buildFloor()">🧱 Build Floor<br><small>10 🪙</small></button>
+        <button class="tool-btn btn-furniture" onclick="openShop()">🛋️ Furniture</button>
+        <button class="tool-btn btn-paint" onclick="openPaint()">🎨 Paint</button>
+        <button class="tool-btn btn-destroy" onclick="toggleDestroy()">💥 Remove</button>
+    </div>
+</div>
+
+<script>
+    // Game state
+    let selectedChar = '';
+    let selectedCharName = '';
+    let coins = 50;
+    let floors = [];
+    let selectedFloorIndex = -1;
+    let destroyMode = false;
+    let floorColors = {};
+
+    const furniturePrices = {
+        '🛋️': 5, '📺': 8, '🪴': 2, '🖼️': 4, '🕯️': 2, '📚': 3,
+        '🛏️': 6, '🧸': 3, '💡': 3, '🪞': 4, '⏰': 2,
+        '🍳': 4, '🧁': 2, '☕': 2, '🍕': 3, '🧊': 5,
+        '🎮': 7, '🎸': 6, '🏆': 10, '🎨': 5, '🔭': 8, '🎪': 9,
+        '🐕': 8, '🐈': 8, '🐹': 5, '🦜': 6, '🐟': 4
+    };
+
+    // Clouds
+    function createClouds() {
+        for (let i = 0; i < 5; i++) {
+            const cloud = document.createElement('div');
+            cloud.className = 'cloud';
+            cloud.style.width = (80 + Math.random() * 120) + 'px';
+            cloud.style.height = (30 + Math.random() * 30) + 'px';
+            cloud.style.top = (5 + Math.random() * 40) + '%';
+            cloud.style.animationDuration = (20 + Math.random() * 30) + 's';
+            cloud.style.animationDelay = (-Math.random() * 30) + 's';
+            document.body.appendChild(cloud);
+        }
+    }
+    createClouds();
+
+    function showCharSelect() {
+        document.getElementById('title-screen').style.display = 'none';
+        document.getElementById('char-select').style.display = 'flex';
+    }
+
+    function selectChar(emoji, name) {
+        selectedChar = emoji;
+        selectedCharName = name;
+        document.getElementById('char-select').style.display = 'none';
+        document.getElementById('game-ui').style.display = 'block';
+        document.getElementById('char-display').textContent = emoji + ' ' + name;
+        // Start with one floor
+        floors = [{ furniture: [], color: 'floor-cream' }];
+        renderTower();
+        celebrate('🏗️ Let\'s Build!');
+        // Earn coins over time
+        setInterval(() => {
+            coins += floors.length;
+            updateCoins();
+        }, 5000);
+    }
+
+    function updateCoins() {
+        document.getElementById('coins-display').textContent = '🪙 ' + coins;
+    }
+
+    function renderTower() {
+        const container = document.getElementById('tower-container');
+        container.innerHTML = '';
+
+        // Roof
+        const roof = document.createElement('div');
+        roof.className = 'roof';
+        container.appendChild(roof);
+
+        // Floors (top to bottom in display, but we reverse for column-reverse)
+        for (let i = floors.length - 1; i >= 0; i--) {
+            const floor = createFloorElement(i);
+            container.appendChild(floor);
+        }
+
+        document.getElementById('floor-count').textContent = 'Floors: ' + floors.length;
+
+        // Scroll to see the whole tower
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function createFloorElement(index) {
+        const floorData = floors[index];
+        const div = document.createElement('div');
+        const colorClass = floorData.color || 'floor-cream';
+        div.className = 'floor ' + colorClass;
+        div.dataset.index = index;
+        div.onclick = () => clickFloor(index);
+
+        if (selectedFloorIndex === index) {
+            div.style.outline = '3px solid #E67E22';
+            div.style.outlineOffset = '-3px';
+        }
+
+        // Floor number
+        const num = document.createElement('div');
+        num.className = 'floor-number';
+        num.textContent = 'F' + (index + 1);
+        div.appendChild(num);
+
+        // Windows
+        const wl = document.createElement('div');
+        wl.className = 'window left';
+        wl.innerHTML = '<div class="curtain l"></div><div class="curtain r"></div>';
+        div.appendChild(wl);
+
+        const wr = document.createElement('div');
+        wr.className = 'window right';
+        wr.innerHTML = '<div class="curtain l"></div><div class="curtain r"></div>';
+        div.appendChild(wr);
+
+        // Interior
+        const interior = document.createElement('div');
+        interior.className = 'floor-interior';
+
+        // Furniture
+        floorData.furniture.forEach((item, fi) => {
+            const furn = document.createElement('span');
+            furn.className = 'furniture-item';
+            furn.textContent = item;
+            furn.onclick = (e) => {
+                e.stopPropagation();
+                if (destroyMode) {
+                    removeFurniture(index, fi);
+                }
+            };
+            interior.appendChild(furn);
+        });
+
+        // Character appears on a random floor
+        if (index === Math.floor(Math.random() * 0.9999 * floors.length) || floors.length === 1) {
+            // Only show character on one floor
+        }
+        // Show character on the top floor
+        if (index === floors.length - 1) {
+            const resident = document.createElement('span');
+            resident.className = 'resident';
+            resident.textContent = selectedChar;
+            interior.appendChild(resident);
+        }
+
+        div.appendChild(interior);
+        return div;
+    }
+
+    function clickFloor(index) {
+        if (destroyMode) {
+            if (floors.length <= 1) {
+                celebrate('🚫 Need at least 1 floor!');
+                return;
+            }
+            floors.splice(index, 1);
+            coins += 5;
+            updateCoins();
+            selectedFloorIndex = -1;
+            renderTower();
+            spawnSparkles('💥');
+            return;
+        }
+        selectedFloorIndex = index;
+        renderTower();
+        document.getElementById('shop-floor-info').textContent = 'Adding to Floor ' + (index + 1);
+        document.getElementById('paint-floor-info').textContent = 'Painting Floor ' + (index + 1);
+    }
+
+    function buildFloor() {
+        if (coins < 10) {
+            celebrate('🚫 Need 10 coins!');
+            return;
+        }
+        coins -= 10;
+        updateCoins();
+        floors.push({ furniture: [], color: 'floor-cream' });
+        renderTower();
+        spawnSparkles('✨');
+
+        // Milestones
+        if (floors.length === 5) celebrate('⭐ 5 Floors! Amazing!');
+        if (floors.length === 10) celebrate('🌟 10 Floors! MEGA Tower!');
+        if (floors.length === 20) celebrate('🏆 20 Floors! LEGENDARY!');
+        if (floors.length === 50) celebrate('👑 50 Floors! KING OF TOWERS!');
+    }
+
+    function openShop() {
+        destroyMode = false;
+        document.body.classList.remove('destroy-mode');
+        if (selectedFloorIndex === -1) {
+            selectedFloorIndex = floors.length - 1;
+            document.getElementById('shop-floor-info').textContent = 'Adding to Floor ' + (selectedFloorIndex + 1);
+            renderTower();
+        }
+        document.getElementById('furniture-shop').style.display = 'flex';
+    }
+
+    function closeShop() {
+        document.getElementById('furniture-shop').style.display = 'none';
+    }
+
+    function buyFurniture(emoji) {
+        const price = furniturePrices[emoji] || 5;
+        if (coins < price) {
+            celebrate('🚫 Need ' + price + ' coins!');
+            return;
+        }
+        if (selectedFloorIndex === -1) selectedFloorIndex = floors.length - 1;
+        if (floors[selectedFloorIndex].furniture.length >= 6) {
+            celebrate('🚫 Floor is full!');
+            return;
+        }
+        coins -= price;
+        updateCoins();
+        floors[selectedFloorIndex].furniture.push(emoji);
+        renderTower();
+        spawnSparkles('✨');
+    }
+
+    function removeFurniture(floorIndex, furnitureIndex) {
+        const item = floors[floorIndex].furniture[furnitureIndex];
+        const refund = Math.floor((furniturePrices[item] || 5) / 2);
+        floors[floorIndex].furniture.splice(furnitureIndex, 1);
+        coins += refund;
+        updateCoins();
+        renderTower();
+        spawnSparkles('💥');
+    }
+
+    function openPaint() {
+        destroyMode = false;
+        document.body.classList.remove('destroy-mode');
+        if (selectedFloorIndex === -1) {
+            selectedFloorIndex = floors.length - 1;
+            document.getElementById('paint-floor-info').textContent = 'Painting Floor ' + (selectedFloorIndex + 1);
+            renderTower();
+        }
+        document.getElementById('paint-shop').style.display = 'flex';
+    }
+
+    function closePaint() {
+        document.getElementById('paint-shop').style.display = 'none';
+    }
+
+    function paintFloor(colorClass) {
+        if (selectedFloorIndex === -1) selectedFloorIndex = floors.length - 1;
+        floors[selectedFloorIndex].color = colorClass;
+        renderTower();
+        spawnSparkles('🎨');
+    }
+
+    function toggleDestroy() {
+        destroyMode = !destroyMode;
+        document.body.classList.toggle('destroy-mode', destroyMode);
+        if (destroyMode) {
+            celebrate('💥 Click to remove!');
+        }
+    }
+
+    function celebrate(text) {
+        const div = document.createElement('div');
+        div.className = 'celebration';
+        div.textContent = text;
+        document.body.appendChild(div);
+        setTimeout(() => div.remove(), 1500);
+    }
+
+    function spawnSparkles(emoji) {
+        for (let i = 0; i < 6; i++) {
+            const s = document.createElement('div');
+            s.className = 'sparkle';
+            s.textContent = emoji;
+            s.style.left = (30 + Math.random() * 40) + '%';
+            s.style.top = (30 + Math.random() * 40) + '%';
+            s.style.animationDelay = (Math.random() * 0.3) + 's';
+            document.body.appendChild(s);
+            setTimeout(() => s.remove(), 1200);
+        }
+    }
+</script>
+
+</body>
+</html>

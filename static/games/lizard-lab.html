@@ -1,0 +1,1735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lizard Laboratory</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Comic Sans MS', 'Chalkboard', cursive;
+            overflow: hidden;
+        }
+        #gameContainer {
+            position: relative;
+            width: 900px;
+            height: 600px;
+        }
+        canvas {
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="c" width="900" height="600"></canvas>
+    </div>
+<script>
+// ===================== LIZARD LABORATORY =====================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 900, H = 600;
+const TILE = 40;
+const GRAVITY = 0.5;
+const JUMP_FORCE = -10.8;
+const MOVE_SPEED = 4.2;
+const ACCEL = 0.6;
+const DECEL = 0.45;
+const AIR_ACCEL = 0.4;
+const AIR_DECEL = 0.15;
+const COYOTE_TIME = 8;
+const JUMP_BUFFER = 8;
+const PUNCH_RANGE = 50;
+const PUNCH_DAMAGE = 20;
+const PUNCH_COOLDOWN = 25;
+const ENEMY_PUNCH_COOLDOWN = 60;
+const SAVE_KEY = 'lizardLabSave';
+
+// ===================== INPUT =====================
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.code] = true; e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ===================== GAME STATE =====================
+let state = 'menu'; // menu, charSelect, playing, paused, dead, levelComplete, gameWin
+let selectedChar = null;
+let currentLevel = 0;
+let player = null;
+let enemies = [];
+let particles = [];
+let puzzles = [];
+let camera = { x: 0, y: 0 };
+let levelData = null;
+let hurtFlash = 0;
+let messageText = '';
+let messageTimer = 0;
+let menuSelection = 0;
+let pauseSelection = 0;
+let charSelection = 0;
+let deathSelection = 0;
+let levelCompleteSelection = 0;
+let hasSave = false;
+
+// ===================== CHARACTERS =====================
+const CHARACTERS = [
+    { name: 'Crocodile', id: 'croc', bodyColor: '#2E7D32', bellyColor: '#81C784', accessory: 'sunglasses' },
+    { name: 'Dog', id: 'dog', bodyColor: '#8D6E63', bellyColor: '#D7CCC8', accessory: 'collar' },
+    { name: 'Black Lizard', id: 'blizard', bodyColor: '#37474F', bellyColor: '#78909C', accessory: 'none' },
+];
+
+// ===================== LEVELS =====================
+// Tile types: 0=air, 1=floor, 2=wall, 3=lab_table, 4=moving_platform, 5=spikes(visual only, no damage for easy mode),
+//             6=door(level exit), 7=puzzle_switch, 8=puzzle_door(opens when puzzle solved), 9=crate(pushable)
+function buildLevels() {
+    return [
+        // Level 1: The Entry Lab - simple intro
+        {
+            name: "The Entry Lab",
+            bgColor1: '#263238', bgColor2: '#37474F',
+            width: 50, height: 15,
+            playerStart: { x: 2, y: 12 },
+            enemies: [
+                { x: 18, y: 12, patrol: [16, 22] },
+                { x: 32, y: 12, patrol: [30, 36] },
+            ],
+            puzzle: { type: 'switches', switches: [{x:12,y:12},{x:25,y:12}], door: {x:45,y:11}, hint: 'Hit both switches to open the exit!' },
+            exit: { x: 48, y: 12 },
+            build: function(map) {
+                // Ground
+                for (let x = 0; x < 50; x++) { map[14][x] = 1; map[13][x] = 1; }
+                // Walls at edges
+                for (let y = 0; y < 15; y++) { map[y][0] = 2; map[y][49] = 2; }
+                // Ceiling
+                for (let x = 0; x < 50; x++) { map[0][x] = 2; }
+                // Lab tables
+                map[12][8] = 3; map[12][9] = 3;
+                map[12][28] = 3; map[12][29] = 3;
+                // Small platforms for easy parkour (max 2-tile jumps)
+                map[11][12] = 1; map[11][13] = 1; // step up from ground
+                map[10][15] = 1; map[10][16] = 1; // y11->y10
+                map[8][19] = 1; map[8][20] = 1; map[8][21] = 1; // y10->y8
+                map[10][23] = 1; map[10][24] = 1; // drop back to y10
+                // Puzzle door wall
+                map[12][45] = 8; map[11][45] = 8;
+                // Switch markers
+                map[12][12] = 7; map[12][25] = 7;
+                // Exit
+                map[12][48] = 6;
+            }
+        },
+        // Level 2: Chemical Storage - more parkour
+        {
+            name: "Chemical Storage",
+            bgColor1: '#1B5E20', bgColor2: '#2E7D32',
+            width: 60, height: 15,
+            playerStart: { x: 2, y: 12 },
+            enemies: [
+                { x: 15, y: 12, patrol: [12, 20] },
+                { x: 30, y: 8, patrol: [27, 34] },
+                { x: 45, y: 12, patrol: [42, 50] },
+            ],
+            puzzle: { type: 'switches', switches: [{x:20,y:6},{x:38,y:12},{x:52,y:10}], door: {x:56,y:11}, hint: 'Find and hit all 3 switches!' },
+            exit: { x: 58, y: 12 },
+            build: function(map) {
+                for (let x = 0; x < 60; x++) { map[14][x] = 1; map[13][x] = 1; }
+                for (let y = 0; y < 15; y++) { map[y][0] = 2; map[y][59] = 2; }
+                for (let x = 0; x < 60; x++) { map[0][x] = 2; }
+                // Gap in floor (easy jump)
+                map[13][22] = 0; map[14][22] = 0;
+                map[13][23] = 0; map[14][23] = 0;
+                // Platforms - staircase up (max 2-tile jumps)
+                map[11][9] = 1; map[11][10] = 1;  // step 1: ground->y11
+                map[10][12] = 1; map[10][13] = 1; // step 2: y11->y10
+                map[8][15] = 1; map[8][16] = 1;   // step 3: y10->y8
+                map[6][19] = 1; map[6][20] = 1; map[6][21] = 1; // step 4: y8->y6
+                // Staircase down to mid-section
+                map[8][24] = 1; map[8][25] = 1;   // y6->y8
+                map[9][27] = 1; map[9][28] = 1; map[9][29] = 1;
+                map[9][30] = 1; map[9][31] = 1; map[9][32] = 1;
+                map[9][33] = 1; map[9][34] = 1;
+                // Staircase up from mid-section
+                map[7][35] = 1; map[7][36] = 1;   // y9->y7
+                map[5][39] = 1; map[5][40] = 1;   // y7->y5
+                // Stair-step down (max 2-tile drops with platforms)
+                map[7][43] = 1; map[7][44] = 1;   // y5->y7
+                map[9][46] = 1; map[9][47] = 1;   // y7->y9
+                map[11][49] = 1; map[11][50] = 1; // y9->y11
+                map[10][51] = 1; map[10][52] = 1; map[10][53] = 1;
+                // Lab tables
+                map[12][5] = 3; map[12][6] = 3;
+                map[12][35] = 3;
+                // Switches
+                map[6][20] = 7; map[12][38] = 7; map[10][52] = 7;
+                // Puzzle door
+                map[12][56] = 8; map[11][56] = 8;
+                // Exit
+                map[12][58] = 6;
+            }
+        },
+        // Level 3: The Boss Lab - final challenge
+        {
+            name: "The Boss Lab",
+            bgColor1: '#4A148C', bgColor2: '#6A1B9A',
+            width: 70, height: 15,
+            playerStart: { x: 2, y: 12 },
+            enemies: [
+                { x: 12, y: 12, patrol: [10, 16] },
+                { x: 25, y: 12, patrol: [22, 28] },
+                { x: 38, y: 12, patrol: [35, 42] },
+                { x: 50, y: 12, patrol: [48, 54] },
+                { x: 60, y: 12, patrol: [58, 64] },
+            ],
+            puzzle: { type: 'switches', switches: [{x:18,y:12},{x:37,y:6},{x:49,y:10},{x:62,y:12}], door: {x:66,y:11}, hint: 'Find all 4 switches to escape the lab!' },
+            exit: { x: 68, y: 12 },
+            build: function(map) {
+                for (let x = 0; x < 70; x++) { map[14][x] = 1; map[13][x] = 1; }
+                for (let y = 0; y < 15; y++) { map[y][0] = 2; map[y][69] = 2; }
+                for (let x = 0; x < 70; x++) { map[0][x] = 2; }
+                // Floor gaps
+                map[13][20] = 0; map[14][20] = 0;
+                map[13][21] = 0; map[14][21] = 0;
+                map[13][40] = 0; map[14][40] = 0;
+                map[13][41] = 0; map[14][41] = 0;
+                // Platforms - parkour section 1 (max 2-tile jumps)
+                map[11][7] = 1; map[11][8] = 1;   // step up from ground
+                map[10][10] = 1; map[10][11] = 1; // y11->y10
+                map[8][13] = 1; map[8][14] = 1;   // y10->y8
+                map[10][16] = 1; map[10][17] = 1; // drop to y10
+                // Parkour section 2 (max 2-tile jumps)
+                map[11][27] = 1; map[11][28] = 1; // step up from ground
+                map[10][30] = 1; map[10][31] = 1; // y11->y10
+                map[8][33] = 1; map[8][34] = 1;   // y10->y8
+                map[6][36] = 1; map[6][37] = 1; map[6][38] = 1; // y8->y6
+                map[8][40] = 1; map[8][41] = 1;   // drop y6->y8
+                map[9][42] = 1; map[9][43] = 1;   // y8->y9
+                map[11][44] = 1; map[11][45] = 1; // drop y9->y11
+                // Parkour section 3
+                map[10][47] = 1; map[10][48] = 1; map[10][49] = 1;
+                map[10][50] = 1;
+                // Lab tables
+                map[12][5] = 3; map[12][6] = 3;
+                map[12][30] = 3;
+                map[12][55] = 3; map[12][56] = 3;
+                // Switches
+                map[12][18] = 7; map[6][37] = 7; map[10][49] = 7; map[12][62] = 7;
+                // Puzzle door
+                map[12][66] = 8; map[11][66] = 8;
+                // Exit
+                map[12][68] = 6;
+            }
+        }
+    ];
+}
+
+// ===================== PLAYER =====================
+function createPlayer(charId, x, y) {
+    const charInfo = CHARACTERS.find(c => c.id === charId);
+    return {
+        x: x * TILE, y: y * TILE,
+        vx: 0, vy: 0,
+        w: 32, h: 38,
+        hp: 100, maxHp: 100,
+        charId: charId,
+        bodyColor: charInfo.bodyColor,
+        bellyColor: charInfo.bellyColor,
+        accessory: charInfo.accessory,
+        facing: 1, // 1=right, -1=left
+        grounded: false,
+        coyoteTimer: 0,
+        jumpBuffer: 0,
+        wasGrounded: false,
+        punching: false,
+        punchTimer: 0,
+        punchCooldown: 0,
+        invincible: 0,
+        animFrame: 0,
+        animTimer: 0,
+    };
+}
+
+// ===================== ENEMY =====================
+function createEnemy(x, y, patrolMin, patrolMax) {
+    return {
+        x: x * TILE, y: y * TILE,
+        vx: 1.2, vy: 0,
+        w: 32, h: 38,
+        hp: 60, maxHp: 60,
+        facing: 1,
+        patrolMin: patrolMin * TILE,
+        patrolMax: patrolMax * TILE,
+        grounded: false,
+        punching: false,
+        punchTimer: 0,
+        punchCooldown: 0,
+        hurtTimer: 0,
+        animFrame: 0,
+        animTimer: 0,
+        dead: false,
+    };
+}
+
+// ===================== PARTICLE =====================
+function spawnParticles(x, y, color, count) {
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6 - 2,
+            life: 30 + Math.random() * 20,
+            color: color,
+            size: 3 + Math.random() * 4,
+        });
+    }
+}
+
+// ===================== LEVEL LOADING =====================
+function loadLevel(levelIndex) {
+    const levels = buildLevels();
+    if (levelIndex >= levels.length) {
+        state = 'gameWin';
+        return;
+    }
+    currentLevel = levelIndex;
+    const lvl = levels[levelIndex];
+
+    // Build tile map
+    const map = [];
+    for (let y = 0; y < lvl.height; y++) {
+        map[y] = [];
+        for (let x = 0; x < lvl.width; x++) {
+            map[y][x] = 0;
+        }
+    }
+    lvl.build(map);
+    levelData = { ...lvl, map };
+
+    // Create player
+    player = createPlayer(selectedChar, lvl.playerStart.x, lvl.playerStart.y);
+
+    // Create enemies
+    enemies = lvl.enemies.map(e => createEnemy(e.x, e.y, e.patrol[0], e.patrol[1]));
+
+    // Setup puzzles
+    puzzles = [];
+    if (lvl.puzzle) {
+        if (lvl.puzzle.type === 'switches') {
+            lvl.puzzle.switches.forEach((sw, i) => {
+                puzzles.push({ type: 'switch', x: sw.x * TILE, y: sw.y * TILE, activated: false, id: i });
+            });
+        }
+        levelData.puzzleDoorOpen = false;
+    }
+
+    particles = [];
+    camera = { x: 0, y: 0 };
+    showMessage(lvl.name, 120);
+    if (lvl.puzzle) {
+        setTimeout(() => showMessage(lvl.puzzle.hint, 180), 2000);
+    }
+}
+
+function showMessage(text, duration) {
+    messageText = text;
+    messageTimer = duration || 120;
+}
+
+// ===================== COLLISION =====================
+function getTile(tx, ty) {
+    if (!levelData) return 1;
+    if (ty < 0 || ty >= levelData.height || tx < 0 || tx >= levelData.width) return 1;
+    return levelData.map[ty][tx];
+}
+
+function isSolid(tx, ty) {
+    const t = getTile(tx, ty);
+    if (t === 8 && !levelData.puzzleDoorOpen) return true; // puzzle door closed
+    if (t === 7) return true; // switches have solid ground
+    return t === 1 || t === 2;
+}
+
+function entityCollideMap(ent) {
+    // Horizontal
+    let tx, ty;
+    if (ent.vx > 0) {
+        tx = Math.floor((ent.x + ent.w) / TILE);
+        for (let checkY = Math.floor(ent.y / TILE); checkY <= Math.floor((ent.y + ent.h - 1) / TILE); checkY++) {
+            if (isSolid(tx, checkY)) {
+                ent.x = tx * TILE - ent.w - 0.01;
+                ent.vx = 0;
+                break;
+            }
+        }
+    } else if (ent.vx < 0) {
+        tx = Math.floor(ent.x / TILE);
+        for (let checkY = Math.floor(ent.y / TILE); checkY <= Math.floor((ent.y + ent.h - 1) / TILE); checkY++) {
+            if (isSolid(tx, checkY)) {
+                ent.x = (tx + 1) * TILE + 0.01;
+                ent.vx = 0;
+                break;
+            }
+        }
+    }
+
+    // Vertical
+    ent.grounded = false;
+    if (ent.vy > 0) {
+        ty = Math.floor((ent.y + ent.h) / TILE);
+        for (let checkX = Math.floor(ent.x / TILE); checkX <= Math.floor((ent.x + ent.w - 1) / TILE); checkX++) {
+            if (isSolid(checkX, ty)) {
+                ent.y = ty * TILE - ent.h;
+                ent.vy = 0;
+                ent.grounded = true;
+                break;
+            }
+        }
+    } else if (ent.vy < 0) {
+        ty = Math.floor(ent.y / TILE);
+        for (let checkX = Math.floor(ent.x / TILE); checkX <= Math.floor((ent.x + ent.w - 1) / TILE); checkX++) {
+            if (isSolid(checkX, ty)) {
+                ent.y = (ty + 1) * TILE + 0.01;
+                ent.vy = 0;
+                break;
+            }
+        }
+    }
+}
+
+// ===================== UPDATE =====================
+function update() {
+    if (state === 'menu') {
+        if (keys['ArrowUp'] || keys['KeyW']) { menuSelection = Math.max(0, menuSelection - 1); keys['ArrowUp'] = false; keys['KeyW'] = false; }
+        if (keys['ArrowDown'] || keys['KeyS']) { menuSelection = Math.min(hasSave ? 2 : 1, menuSelection + 1); keys['ArrowDown'] = false; keys['KeyS'] = false; }
+        if (keys['Enter'] || keys['Space']) {
+            keys['Enter'] = false; keys['Space'] = false;
+            if (menuSelection === 0) { state = 'charSelect'; charSelection = 0; }
+            else if (menuSelection === 1 && hasSave) { loadSave(); state = 'playing'; }
+            else if ((menuSelection === 1 && !hasSave) || menuSelection === 2) { /* quit - do nothing on web */ }
+        }
+        return;
+    }
+
+    if (state === 'charSelect') {
+        if (keys['ArrowLeft'] || keys['KeyA']) { charSelection = (charSelection + 2) % 3; keys['ArrowLeft'] = false; keys['KeyA'] = false; }
+        if (keys['ArrowRight'] || keys['KeyD']) { charSelection = (charSelection + 1) % 3; keys['ArrowRight'] = false; keys['KeyD'] = false; }
+        if (keys['Enter'] || keys['Space']) {
+            keys['Enter'] = false; keys['Space'] = false;
+            selectedChar = CHARACTERS[charSelection].id;
+            currentLevel = 0;
+            loadLevel(0);
+            state = 'playing';
+        }
+        if (keys['Escape']) { keys['Escape'] = false; state = 'menu'; }
+        return;
+    }
+
+    if (state === 'paused') {
+        if (keys['ArrowUp'] || keys['KeyW']) { pauseSelection = Math.max(0, pauseSelection - 1); keys['ArrowUp'] = false; keys['KeyW'] = false; }
+        if (keys['ArrowDown'] || keys['KeyS']) { pauseSelection = Math.min(2, pauseSelection + 1); keys['ArrowDown'] = false; keys['KeyS'] = false; }
+        if (keys['Enter'] || keys['Space']) {
+            keys['Enter'] = false; keys['Space'] = false;
+            if (pauseSelection === 0) { state = 'playing'; }
+            else if (pauseSelection === 1) { saveGame(); showMessage('Game Saved!', 90); state = 'playing'; }
+            else if (pauseSelection === 2) { saveGame(); state = 'menu'; checkSave(); }
+        }
+        if (keys['Escape']) { keys['Escape'] = false; state = 'playing'; }
+        return;
+    }
+
+    if (state === 'dead') {
+        if (keys['ArrowUp'] || keys['KeyW']) { deathSelection = Math.max(0, deathSelection - 1); keys['ArrowUp'] = false; keys['KeyW'] = false; }
+        if (keys['ArrowDown'] || keys['KeyS']) { deathSelection = Math.min(1, deathSelection + 1); keys['ArrowDown'] = false; keys['KeyS'] = false; }
+        if (keys['Enter'] || keys['Space']) {
+            keys['Enter'] = false; keys['Space'] = false;
+            if (deathSelection === 0) { loadLevel(currentLevel); state = 'playing'; }
+            else { state = 'menu'; checkSave(); }
+        }
+        return;
+    }
+
+    if (state === 'levelComplete') {
+        if (keys['Enter'] || keys['Space']) {
+            keys['Enter'] = false; keys['Space'] = false;
+            loadLevel(currentLevel + 1);
+            if (state !== 'gameWin') state = 'playing';
+        }
+        return;
+    }
+
+    if (state === 'gameWin') {
+        if (keys['Enter'] || keys['Space']) {
+            keys['Enter'] = false; keys['Space'] = false;
+            localStorage.removeItem(SAVE_KEY);
+            state = 'menu'; checkSave();
+        }
+        return;
+    }
+
+    if (state !== 'playing') return;
+
+    // Pause
+    if (keys['Escape']) { keys['Escape'] = false; state = 'paused'; pauseSelection = 0; return; }
+
+    if (!player || !levelData) return;
+
+    // Player movement with acceleration
+    const wantLeft = keys['ArrowLeft'] || keys['KeyA'];
+    const wantRight = keys['ArrowRight'] || keys['KeyD'];
+    const wantJump = keys['ArrowUp'] || keys['KeyW'] || keys['Space'];
+    const onGround = player.grounded;
+    const accel = onGround ? ACCEL : AIR_ACCEL;
+    const decel = onGround ? DECEL : AIR_DECEL;
+
+    if (wantLeft) {
+        player.vx = Math.max(player.vx - accel, -MOVE_SPEED);
+        player.facing = -1;
+    } else if (wantRight) {
+        player.vx = Math.min(player.vx + accel, MOVE_SPEED);
+        player.facing = 1;
+    } else {
+        // Decelerate toward zero
+        if (player.vx > 0) player.vx = Math.max(0, player.vx - decel);
+        else if (player.vx < 0) player.vx = Math.min(0, player.vx + decel);
+    }
+
+    // Coyote time: brief grace period after walking off a ledge
+    if (onGround) {
+        player.coyoteTimer = COYOTE_TIME;
+    } else {
+        if (player.coyoteTimer > 0) player.coyoteTimer--;
+    }
+
+    // Jump buffer: remember jump press for a few frames
+    if (wantJump) {
+        player.jumpBuffer = JUMP_BUFFER;
+    } else {
+        if (player.jumpBuffer > 0) player.jumpBuffer--;
+    }
+
+    // Jump if we have coyote time and a buffered jump
+    const canJump = player.coyoteTimer > 0 && player.jumpBuffer > 0;
+    if (canJump) {
+        player.vy = JUMP_FORCE;
+        player.grounded = false;
+        player.coyoteTimer = 0;
+        player.jumpBuffer = 0;
+    }
+
+    // Variable jump height: release early for a shorter hop
+    if (!wantJump && player.vy < JUMP_FORCE * 0.4) {
+        player.vy *= 0.85;
+    }
+
+    // Punch
+    if ((keys['KeyX'] || keys['KeyZ'] || keys['ShiftLeft'] || keys['ShiftRight']) && player.punchCooldown <= 0 && !player.punching) {
+        player.punching = true;
+        player.punchTimer = 15;
+        player.punchCooldown = PUNCH_COOLDOWN;
+        // Check enemy hits
+        enemies.forEach(e => {
+            if (e.dead) return;
+            const punchX = player.x + (player.facing > 0 ? player.w : -PUNCH_RANGE);
+            const punchY = player.y;
+            if (punchX < e.x + e.w && punchX + PUNCH_RANGE > e.x && punchY < e.y + e.h && punchY + player.h > e.y) {
+                e.hp -= PUNCH_DAMAGE;
+                e.hurtTimer = 15;
+                e.vx = player.facing * 6;
+                spawnParticles(e.x + e.w/2, e.y + e.h/2, '#FFEB3B', 8);
+                if (e.hp <= 0) {
+                    e.dead = true;
+                    spawnParticles(e.x + e.w/2, e.y + e.h/2, '#4CAF50', 15);
+                }
+            }
+        });
+    }
+
+    // Player physics
+    player.vy += GRAVITY;
+    player.x += player.vx;
+    player.y += player.vy;
+    entityCollideMap(player);
+
+    // Player timers
+    if (player.punchTimer > 0) player.punchTimer--;
+    else player.punching = false;
+    if (player.punchCooldown > 0) player.punchCooldown--;
+    if (player.invincible > 0) player.invincible--;
+    if (hurtFlash > 0) hurtFlash--;
+
+    // Anim
+    if (Math.abs(player.vx) > 0.5) {
+        player.animTimer++;
+        if (player.animTimer > 8) { player.animTimer = 0; player.animFrame = (player.animFrame + 1) % 4; }
+    } else {
+        player.animFrame = 0; player.animTimer = 0;
+    }
+
+    // Fall off map
+    if (player.y > levelData.height * TILE + 100) {
+        player.hp = 0;
+    }
+
+    // Check death
+    if (player.hp <= 0) {
+        state = 'dead'; deathSelection = 0;
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, player.bodyColor, 20);
+        return;
+    }
+
+    // Check puzzle switches - activate when standing near them (within ~1.5 tiles horizontally, on same ground level)
+    puzzles.forEach(p => {
+        if (p.type === 'switch' && !p.activated) {
+            const dxSw = Math.abs((player.x + player.w/2) - (p.x + TILE/2));
+            const dySw = Math.abs((player.y + player.h) - (p.y + TILE));
+            if (dxSw < TILE * 1.5 && dySw < TILE * 1.5) {
+                if (keys['KeyE'] || keys['ArrowDown'] || keys['KeyS']) {
+                    p.activated = true;
+                    spawnParticles(p.x + TILE/2, p.y, '#FFD700', 10);
+                    showMessage('Switch activated!', 60);
+                    // Check if all switches active
+                    if (puzzles.every(pp => pp.activated)) {
+                        levelData.puzzleDoorOpen = true;
+                        showMessage('The door opened!', 90);
+                        spawnParticles(levelData.puzzle.door.x * TILE + TILE/2, levelData.puzzle.door.y * TILE + TILE/2, '#00E5FF', 20);
+                    }
+                }
+            }
+        }
+    });
+
+    // Check exit
+    if (levelData.exit) {
+        const ex = levelData.exit.x * TILE;
+        const ey = levelData.exit.y * TILE;
+        if (player.x + player.w > ex && player.x < ex + TILE && player.y + player.h > ey && player.y < ey + TILE) {
+            if (levelData.puzzleDoorOpen || !levelData.puzzle) {
+                state = 'levelComplete'; levelCompleteSelection = 0;
+                spawnParticles(player.x + player.w/2, player.y, '#FFD700', 30);
+                return;
+            }
+        }
+    }
+
+    // Update enemies
+    enemies.forEach(e => {
+        if (e.dead) return;
+
+        // Patrol movement
+        if (e.hurtTimer <= 0) {
+            if (e.x <= e.patrolMin) { e.vx = 1.2; e.facing = 1; }
+            if (e.x + e.w >= e.patrolMax) { e.vx = -1.2; e.facing = -1; }
+
+            // Chase player if close (only if on similar Y level)
+            const dx = player.x - e.x;
+            const dy = player.y - e.y;
+            const distX = Math.abs(dx);
+            const distY = Math.abs(dy);
+            if (distX < 200 && distX > 10 && distY < TILE * 2) {
+                e.vx = dx > 0 ? 2 : -2;
+                e.facing = dx > 0 ? 1 : -1;
+            }
+
+            // Enemy punch (must be close on BOTH axes)
+            if (distX < PUNCH_RANGE + 20 && distY < TILE && e.punchCooldown <= 0) {
+                e.punching = true;
+                e.punchTimer = 15;
+                e.punchCooldown = ENEMY_PUNCH_COOLDOWN;
+                // Hit player?
+                if (distX < PUNCH_RANGE + 10 && distY < TILE && player.invincible <= 0) {
+                    player.hp -= 10;
+                    player.invincible = 30;
+                    hurtFlash = 10;
+                    player.vx = e.facing * 5;
+                    spawnParticles(player.x + player.w/2, player.y + player.h/2, '#F44336', 6);
+                }
+            }
+        }
+
+        // Physics
+        e.vy += GRAVITY;
+        e.x += e.vx;
+        e.y += e.vy;
+        entityCollideMap(e);
+
+        // Timers
+        if (e.punchTimer > 0) e.punchTimer--;
+        else e.punching = false;
+        if (e.punchCooldown > 0) e.punchCooldown--;
+        if (e.hurtTimer > 0) { e.hurtTimer--; e.vx *= 0.85; }
+
+        // Anim
+        e.animTimer++;
+        if (e.animTimer > 10) { e.animTimer = 0; e.animFrame = (e.animFrame + 1) % 4; }
+    });
+
+    // Update particles
+    particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.15;
+        p.life--;
+    });
+    particles = particles.filter(p => p.life > 0);
+
+    // Camera
+    camera.x = player.x - W / 2 + player.w / 2;
+    camera.y = player.y - H / 2 + player.h / 2;
+    camera.x = Math.max(0, Math.min(camera.x, levelData.width * TILE - W));
+    camera.y = Math.max(0, Math.min(camera.y, levelData.height * TILE - H));
+
+    // Message timer
+    if (messageTimer > 0) messageTimer--;
+}
+
+// ===================== DRAWING =====================
+function drawCharacter(ent, isEnemy) {
+    const sx = ent.x - camera.x;
+    const sy = ent.y - camera.y;
+    if (sx < -60 || sx > W + 60 || sy < -60 || sy > H + 60) return;
+
+    ctx.save();
+    ctx.translate(sx + ent.w / 2, sy + ent.h / 2);
+    if (ent.facing < 0) ctx.scale(-1, 1);
+
+    // Flash when hurt
+    const flash = isEnemy ? ent.hurtTimer > 0 : (player.invincible > 0 && Math.floor(player.invincible / 3) % 2);
+    if (flash) ctx.globalAlpha = 0.5;
+
+    // Leg animation offset
+    const legAnim = ent.grounded ? Math.sin(ent.animFrame * Math.PI / 2) * 4 : 0;
+
+    if (isEnemy) {
+        // Green lizard enemy
+        // Legs
+        ctx.fillStyle = '#2E7D32';
+        ctx.fillRect(-10, 12, 7, 10 + legAnim);
+        ctx.fillRect(4, 12, 7, 10 - legAnim);
+
+        // Tail
+        ctx.fillStyle = '#388E3C';
+        ctx.beginPath();
+        ctx.moveTo(-16, 5);
+        ctx.quadraticCurveTo(-28, 0, -30, 10);
+        ctx.quadraticCurveTo(-28, 14, -16, 12);
+        ctx.fill();
+
+        // Body
+        ctx.fillStyle = '#4CAF50';
+        ctx.beginPath();
+        ctx.ellipse(0, 2, 16, 14, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Belly
+        ctx.fillStyle = '#81C784';
+        ctx.beginPath();
+        ctx.ellipse(2, 5, 10, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Head
+        ctx.fillStyle = '#4CAF50';
+        ctx.beginPath();
+        ctx.ellipse(12, -6, 10, 9, -0.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Snout
+        ctx.fillStyle = '#66BB6A';
+        ctx.beginPath();
+        ctx.ellipse(20, -4, 6, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Eye
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(14, -9, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#D32F2F';
+        ctx.beginPath();
+        ctx.arc(15, -9, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'black';
+        ctx.beginPath();
+        ctx.arc(15.5, -9, 1, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Punch arm
+        if (ent.punching) {
+            ctx.fillStyle = '#4CAF50';
+            ctx.fillRect(12, -2, 24, 8);
+            // Fist
+            ctx.fillStyle = '#388E3C';
+            ctx.beginPath();
+            ctx.arc(38, 2, 6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // HP bar
+        if (ent.hp < ent.maxHp) {
+            ctx.fillStyle = '#333';
+            ctx.fillRect(-16, -24, 32, 5);
+            ctx.fillStyle = ent.hp > 30 ? '#4CAF50' : '#F44336';
+            ctx.fillRect(-16, -24, 32 * (ent.hp / ent.maxHp), 5);
+        }
+    } else {
+        // Player character
+        const charId = ent.charId;
+
+        // Legs
+        ctx.fillStyle = ent.bodyColor;
+        ctx.fillRect(-10, 12, 7, 10 + legAnim);
+        ctx.fillRect(4, 12, 7, 10 - legAnim);
+
+        if (charId === 'croc') {
+            // Crocodile
+            // Tail
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.moveTo(-16, 3);
+            ctx.quadraticCurveTo(-32, -2, -36, 8);
+            ctx.quadraticCurveTo(-32, 16, -16, 12);
+            ctx.fill();
+            // Tail ridges
+            ctx.fillStyle = '#1B5E20';
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(-18 - i * 5, 3 + i);
+                ctx.lineTo(-20 - i * 5, -2 + i);
+                ctx.lineTo(-22 - i * 5, 3 + i);
+                ctx.fill();
+            }
+
+            // Body
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(0, 2, 16, 14, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Back ridges
+            ctx.fillStyle = '#1B5E20';
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(-6 + i * 6, -12);
+                ctx.lineTo(-3 + i * 6, -17);
+                ctx.lineTo(0 + i * 6, -12);
+                ctx.fill();
+            }
+
+            // Belly
+            ctx.fillStyle = ent.bellyColor;
+            ctx.beginPath();
+            ctx.ellipse(2, 6, 10, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head - elongated snout
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(14, -5, 12, 10, -0.15, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Snout
+            ctx.fillStyle = '#388E3C';
+            ctx.beginPath();
+            ctx.ellipse(24, -2, 8, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Nostrils
+            ctx.fillStyle = '#1B5E20';
+            ctx.beginPath();
+            ctx.arc(28, -4, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(28, 0, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Teeth
+            ctx.fillStyle = 'white';
+            ctx.fillRect(20, 2, 3, 4);
+            ctx.fillRect(25, 2, 3, 4);
+
+            // Eye
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(16, -9, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#FFC107';
+            ctx.beginPath();
+            ctx.arc(17, -9, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.ellipse(17.5, -9, 1.2, 2.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Blue sunglasses
+            ctx.fillStyle = '#1565C0';
+            ctx.globalAlpha = flash ? 0.35 : 0.7;
+            ctx.beginPath();
+            ctx.ellipse(17, -9, 7, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = flash ? 0.5 : 1.0;
+            // Frame
+            ctx.strokeStyle = '#0D47A1';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.ellipse(17, -9, 7, 5, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            // Arm of glasses
+            ctx.beginPath();
+            ctx.moveTo(10, -9);
+            ctx.lineTo(4, -10);
+            ctx.stroke();
+            // Shine
+            ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.beginPath();
+            ctx.ellipse(14, -11, 3, 2, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+        } else if (charId === 'dog') {
+            // Dog
+            // Tail (wagging)
+            ctx.fillStyle = ent.bodyColor;
+            const wagAngle = Math.sin(Date.now() / 150) * 0.5;
+            ctx.save();
+            ctx.translate(-14, -2);
+            ctx.rotate(-0.8 + wagAngle);
+            ctx.fillRect(-3, -14, 6, 16);
+            ctx.beginPath();
+            ctx.arc(0, -14, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Body
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(0, 3, 16, 13, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Belly
+            ctx.fillStyle = ent.bellyColor;
+            ctx.beginPath();
+            ctx.ellipse(2, 7, 10, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(14, -6, 11, 11, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Snout/muzzle
+            ctx.fillStyle = ent.bellyColor;
+            ctx.beginPath();
+            ctx.ellipse(22, -2, 7, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Nose
+            ctx.fillStyle = '#212121';
+            ctx.beginPath();
+            ctx.ellipse(27, -3, 3.5, 2.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Mouth
+            ctx.strokeStyle = '#5D4037';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(24, 0);
+            ctx.quadraticCurveTo(22, 4, 19, 2);
+            ctx.stroke();
+
+            // Ear (floppy)
+            ctx.fillStyle = '#6D4C41';
+            ctx.beginPath();
+            ctx.ellipse(8, -8, 6, 11, -0.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Eyes
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(16, -9, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#4E342E';
+            ctx.beginPath();
+            ctx.arc(17, -9, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(17.5, -9, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            // Eye shine
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(16, -10, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Red collar
+            ctx.fillStyle = '#D32F2F';
+            ctx.globalAlpha = flash ? 0.5 : 1.0;
+            ctx.beginPath();
+            ctx.ellipse(12, 4, 14, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Collar tag
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(18, 7, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#FFA000';
+            ctx.beginPath();
+            ctx.arc(18, 7, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+        } else if (charId === 'blizard') {
+            // Black Lizard
+            // Tail
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.moveTo(-16, 3);
+            ctx.quadraticCurveTo(-30, -4, -34, 6);
+            ctx.quadraticCurveTo(-30, 14, -16, 12);
+            ctx.fill();
+
+            // Body
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(0, 2, 16, 14, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Belly
+            ctx.fillStyle = ent.bellyColor;
+            ctx.beginPath();
+            ctx.ellipse(2, 6, 10, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Spots/markings
+            ctx.fillStyle = '#263238';
+            ctx.beginPath(); ctx.arc(-5, -5, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(6, -3, 2, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(-8, 4, 2.5, 0, Math.PI * 2); ctx.fill();
+
+            // Head
+            ctx.fillStyle = ent.bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(12, -6, 10, 9, -0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Snout
+            ctx.fillStyle = '#455A64';
+            ctx.beginPath();
+            ctx.ellipse(20, -4, 6, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Nostrils
+            ctx.fillStyle = '#263238';
+            ctx.beginPath();
+            ctx.arc(23, -5, 1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(23, -2, 1, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Eye - cool slitted eye
+            ctx.fillStyle = '#CFD8DC';
+            ctx.beginPath();
+            ctx.arc(14, -9, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#FF6F00';
+            ctx.beginPath();
+            ctx.arc(15, -9, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.ellipse(15.5, -9, 1, 2.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Head crest
+            ctx.fillStyle = '#455A64';
+            ctx.beginPath();
+            ctx.moveTo(6, -14);
+            ctx.lineTo(10, -20);
+            ctx.lineTo(14, -14);
+            ctx.fill();
+        }
+
+        // Punch arm (same for all player characters)
+        if (ent.punching) {
+            ctx.globalAlpha = flash ? 0.5 : 1.0;
+            ctx.fillStyle = ent.bodyColor;
+            ctx.fillRect(12, -2, 22, 7);
+            // Fist
+            ctx.fillStyle = '#FDD835';
+            ctx.beginPath();
+            ctx.arc(36, 2, 6, 0, Math.PI * 2);
+            ctx.fill();
+            // Pow effect
+            if (ent.punchTimer > 10) {
+                ctx.fillStyle = '#FFEB3B';
+                ctx.font = 'bold 14px Comic Sans MS';
+                ctx.fillText('POW!', 28, -10);
+            }
+        }
+    }
+
+    ctx.restore();
+}
+
+function drawTile(tx, ty) {
+    const t = getTile(tx, ty);
+    if (t === 0) return;
+    const sx = tx * TILE - camera.x;
+    const sy = ty * TILE - camera.y;
+    if (sx < -TILE || sx > W + TILE || sy < -TILE || sy > H + TILE) return;
+
+    switch(t) {
+        case 1: // Floor
+            ctx.fillStyle = '#546E7A';
+            ctx.fillRect(sx, sy, TILE, TILE);
+            ctx.fillStyle = '#607D8B';
+            ctx.fillRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+            // Grid lines
+            ctx.strokeStyle = '#4a636e';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
+            break;
+        case 2: // Wall
+            ctx.fillStyle = '#37474F';
+            ctx.fillRect(sx, sy, TILE, TILE);
+            ctx.fillStyle = '#455A64';
+            ctx.fillRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
+            break;
+        case 3: // Lab table
+            ctx.fillStyle = '#78909C';
+            ctx.fillRect(sx, sy, TILE, TILE);
+            // Table top
+            ctx.fillStyle = '#B0BEC5';
+            ctx.fillRect(sx - 2, sy, TILE + 4, 8);
+            // Beaker
+            ctx.fillStyle = '#81D4FA';
+            ctx.fillRect(sx + 10, sy + 10, 8, 14);
+            ctx.fillRect(sx + 8, sy + 8, 12, 4);
+            // Bubbles
+            ctx.fillStyle = '#4FC3F7';
+            ctx.beginPath();
+            ctx.arc(sx + 14, sy + 14, 2, 0, Math.PI * 2);
+            ctx.fill();
+            break;
+        case 6: // Exit door
+            ctx.fillStyle = '#FFD600';
+            ctx.fillRect(sx + 4, sy - TILE + 10, TILE - 8, TILE + TILE - 10);
+            ctx.fillStyle = '#FFC107';
+            ctx.fillRect(sx + 8, sy - TILE + 14, TILE - 16, TILE + TILE - 18);
+            // Arrow
+            ctx.fillStyle = '#FF6F00';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('EXIT', sx + TILE/2, sy + 6);
+            ctx.textAlign = 'left';
+            break;
+        case 7: // Switch - solid ground with lever sticking up
+            // Draw solid floor tile (same as type 1)
+            ctx.fillStyle = '#546E7A';
+            ctx.fillRect(sx, sy, TILE, TILE);
+            ctx.fillStyle = '#607D8B';
+            ctx.fillRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+            ctx.strokeStyle = '#4a636e';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
+            // Switch base (on top of the tile)
+            const sw = puzzles.find(p => Math.abs(p.x - tx * TILE) < 2 && Math.abs(p.y - ty * TILE) < 2);
+            const activated = sw && sw.activated;
+            // Metal base plate
+            ctx.fillStyle = '#78909C';
+            ctx.fillRect(sx + 6, sy - 6, TILE - 12, 8);
+            ctx.fillStyle = '#90A4AE';
+            ctx.fillRect(sx + 8, sy - 4, TILE - 16, 4);
+            // Lever pole sticking up
+            ctx.strokeStyle = '#455A64';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(sx + TILE/2, sy - 6);
+            if (activated) {
+                ctx.lineTo(sx + TILE/2 + 10, sy - 28);
+            } else {
+                ctx.lineTo(sx + TILE/2 - 10, sy - 28);
+            }
+            ctx.stroke();
+            // Lever knob
+            ctx.fillStyle = activated ? '#4CAF50' : '#F44336';
+            ctx.beginPath();
+            if (activated) {
+                ctx.arc(sx + TILE/2 + 10, sy - 30, 6, 0, Math.PI * 2);
+            } else {
+                ctx.arc(sx + TILE/2 - 10, sy - 30, 6, 0, Math.PI * 2);
+            }
+            ctx.fill();
+            ctx.strokeStyle = activated ? '#388E3C' : '#C62828';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            // Glow effect when activated
+            if (activated) {
+                ctx.fillStyle = 'rgba(76, 175, 80, 0.3)';
+                ctx.beginPath();
+                ctx.arc(sx + TILE/2 + 10, sy - 30, 10, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            // "E" prompt if near player
+            if (player && !activated) {
+                const dxPrompt = Math.abs((player.x + player.w/2) - (tx * TILE + TILE/2));
+                const dyPrompt = Math.abs((player.y + player.h) - (ty * TILE + TILE));
+                if (dxPrompt < TILE * 1.5 && dyPrompt < TILE * 1.5) {
+                    ctx.fillStyle = 'white';
+                    ctx.font = 'bold 14px Comic Sans MS';
+                    ctx.textAlign = 'center';
+                    const bob = Math.sin(Date.now() / 300) * 3;
+                    ctx.fillText('Press E/S/Down', sx + TILE/2, sy - 42 + bob);
+                    ctx.textAlign = 'left';
+                }
+            }
+            break;
+        case 8: // Puzzle door
+            if (!levelData.puzzleDoorOpen) {
+                ctx.fillStyle = '#B71C1C';
+                ctx.fillRect(sx, sy, TILE, TILE);
+                ctx.fillStyle = '#D32F2F';
+                ctx.fillRect(sx + 3, sy + 3, TILE - 6, TILE - 6);
+                // Lock icon
+                ctx.fillStyle = '#FFEB3B';
+                ctx.beginPath();
+                ctx.arc(sx + TILE/2, sy + TILE/2 - 3, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(sx + TILE/2 - 5, sy + TILE/2, 10, 8);
+            }
+            break;
+    }
+}
+
+function drawBackground() {
+    // Gradient
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, levelData ? levelData.bgColor1 : '#263238');
+    grad.addColorStop(1, levelData ? levelData.bgColor2 : '#37474F');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    if (!levelData) return;
+
+    // Lab equipment in background
+    ctx.globalAlpha = 0.15;
+    for (let i = 0; i < 8; i++) {
+        const bx = (i * 230 - camera.x * 0.3) % (W + 200) - 100;
+        const by = 100 + Math.sin(i * 2) * 80;
+        // Test tube
+        ctx.fillStyle = '#00E5FF';
+        ctx.fillRect(bx, by, 20, 60);
+        ctx.beginPath();
+        ctx.arc(bx + 10, by + 60, 10, 0, Math.PI);
+        ctx.fill();
+        // Flask
+        ctx.fillStyle = '#76FF03';
+        ctx.beginPath();
+        ctx.moveTo(bx + 50, by + 10);
+        ctx.lineTo(bx + 40, by + 60);
+        ctx.lineTo(bx + 80, by + 60);
+        ctx.lineTo(bx + 70, by + 10);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+}
+
+function drawHUD() {
+    if (!player) return;
+
+    // HP bar
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(10, 10, 204, 28);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(12, 12, 200, 24);
+    const hpPct = player.hp / player.maxHp;
+    ctx.fillStyle = hpPct > 0.5 ? '#4CAF50' : hpPct > 0.25 ? '#FF9800' : '#F44336';
+    ctx.fillRect(12, 12, 200 * hpPct, 24);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 14px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText(`HP: ${player.hp}/${player.maxHp}`, 112, 29);
+
+    // Level name
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(W - 220, 10, 210, 28);
+    ctx.fillStyle = '#FFD600';
+    ctx.font = 'bold 14px Comic Sans MS';
+    ctx.textAlign = 'right';
+    ctx.fillText(levelData.name + ` (Level ${currentLevel + 1}/3)`, W - 18, 29);
+
+    // Punch cooldown indicator
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(10, 44, 104, 18);
+    ctx.fillStyle = player.punchCooldown > 0 ? '#666' : '#FFD600';
+    ctx.fillRect(12, 46, 100 * (1 - player.punchCooldown / PUNCH_COOLDOWN), 14);
+    ctx.fillStyle = 'white';
+    ctx.font = '10px Comic Sans MS';
+    ctx.fillText('PUNCH [Z/X/Shift]', 14, 57);
+
+    // Controls hint
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(10, H - 30, 350, 22);
+    ctx.fillStyle = '#B0BEC5';
+    ctx.font = '11px Comic Sans MS';
+    ctx.fillText('Arrow Keys/WASD: Move/Jump | Z/X/Shift: Punch | ESC: Pause', 16, H - 14);
+
+    // Puzzle status
+    if (puzzles.length > 0) {
+        const solved = puzzles.filter(p => p.activated).length;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(W/2 - 80, 10, 160, 28);
+        ctx.fillStyle = solved === puzzles.length ? '#4CAF50' : '#FFD600';
+        ctx.font = 'bold 14px Comic Sans MS';
+        ctx.textAlign = 'center';
+        ctx.fillText(`Switches: ${solved}/${puzzles.length}`, W/2, 29);
+    }
+
+    // Message
+    if (messageTimer > 0) {
+        const alpha = messageTimer < 30 ? messageTimer / 30 : 1;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(W/2 - 200, H/2 - 30, 400, 50);
+        ctx.fillStyle = '#FFD600';
+        ctx.font = 'bold 22px Comic Sans MS';
+        ctx.textAlign = 'center';
+        ctx.fillText(messageText, W/2, H/2 + 2);
+        ctx.globalAlpha = 1;
+    }
+
+    ctx.textAlign = 'left';
+
+    // Hurt flash overlay
+    if (hurtFlash > 0) {
+        ctx.fillStyle = `rgba(255, 0, 0, ${hurtFlash / 20})`;
+        ctx.fillRect(0, 0, W, H);
+    }
+}
+
+function drawMenu() {
+    // Background
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#1A237E');
+    grad.addColorStop(1, '#0D47A1');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Animated lab stuff in background
+    ctx.globalAlpha = 0.1;
+    for (let i = 0; i < 12; i++) {
+        const bx = (Date.now() / 40 + i * 120) % (W + 100) - 50;
+        const by = 50 + Math.sin(i * 1.5 + Date.now() / 1000) * 150 + 200;
+        ctx.fillStyle = ['#4CAF50', '#81C784', '#A5D6A7'][i % 3];
+        // Little lizard silhouettes
+        ctx.beginPath();
+        ctx.ellipse(bx, by, 15, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(bx + 12, by - 6, 8, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Title
+    ctx.fillStyle = '#FFD600';
+    ctx.font = 'bold 56px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('LIZARD', W/2, 140);
+    ctx.fillStyle = '#76FF03';
+    ctx.fillText('LABORATORY', W/2, 200);
+
+    // Subtitle
+    ctx.fillStyle = '#B0BEC5';
+    ctx.font = '18px Comic Sans MS';
+    ctx.fillText('A Jaxson Hobbs Game', W/2, 240);
+
+    // Menu items
+    const items = ['New Game'];
+    if (hasSave) items.push('Continue');
+    items.push('Quit');
+
+    items.forEach((item, i) => {
+        const y = 320 + i * 55;
+        const selected = menuSelection === i;
+        ctx.fillStyle = selected ? 'rgba(255,214,0,0.3)' : 'rgba(0,0,0,0.3)';
+        ctx.fillRect(W/2 - 150, y - 20, 300, 44);
+        if (selected) {
+            ctx.strokeStyle = '#FFD600';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(W/2 - 150, y - 20, 300, 44);
+        }
+        ctx.fillStyle = selected ? '#FFD600' : 'white';
+        ctx.font = `bold ${selected ? 26 : 22}px Comic Sans MS`;
+        ctx.fillText(item, W/2, y + 8);
+    });
+
+    ctx.fillStyle = '#78909C';
+    ctx.font = '14px Comic Sans MS';
+    ctx.fillText('Use Arrow Keys and Enter to navigate', W/2, H - 30);
+    ctx.textAlign = 'left';
+}
+
+function drawCharSelect() {
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#263238');
+    grad.addColorStop(1, '#37474F');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#FFD600';
+    ctx.font = 'bold 38px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('Choose Your Character!', W/2, 60);
+
+    CHARACTERS.forEach((ch, i) => {
+        const x = 120 + i * 260;
+        const y = 200;
+        const selected = charSelection === i;
+
+        // Card background
+        ctx.fillStyle = selected ? 'rgba(255,214,0,0.2)' : 'rgba(0,0,0,0.3)';
+        ctx.fillRect(x - 80, y - 80, 200, 320);
+        if (selected) {
+            ctx.strokeStyle = '#FFD600';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x - 80, y - 80, 200, 320);
+        }
+
+        // Draw character preview
+        ctx.save();
+        ctx.translate(x + 20, y + 60);
+        ctx.scale(2.5, 2.5);
+
+        // Simplified preview - body + head
+        const ent = { x: 0, y: 0, w: 32, h: 38, facing: 1, charId: ch.id, bodyColor: ch.bodyColor, bellyColor: ch.bellyColor, accessory: ch.accessory, grounded: true, animFrame: 0, punching: false, punchTimer: 0, invincible: 0 };
+
+        // Legs
+        ctx.fillStyle = ch.bodyColor;
+        ctx.fillRect(-10, 12, 7, 12);
+        ctx.fillRect(4, 12, 7, 12);
+
+        if (ch.id === 'croc') {
+            // Body
+            ctx.fillStyle = ch.bodyColor;
+            ctx.beginPath(); ctx.ellipse(0, 2, 16, 14, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = ch.bellyColor;
+            ctx.beginPath(); ctx.ellipse(2, 6, 10, 8, 0, 0, Math.PI * 2); ctx.fill();
+            // Head
+            ctx.fillStyle = ch.bodyColor;
+            ctx.beginPath(); ctx.ellipse(14, -5, 12, 10, -0.15, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#388E3C';
+            ctx.beginPath(); ctx.ellipse(24, -2, 8, 6, 0, 0, Math.PI * 2); ctx.fill();
+            // Teeth
+            ctx.fillStyle = 'white';
+            ctx.fillRect(20, 2, 3, 4); ctx.fillRect(25, 2, 3, 4);
+            // Eye
+            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(16, -9, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#FFC107'; ctx.beginPath(); ctx.arc(17, -9, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'black'; ctx.beginPath(); ctx.ellipse(17.5, -9, 1.2, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+            // Sunglasses
+            ctx.fillStyle = '#1565C0'; ctx.globalAlpha = 0.7;
+            ctx.beginPath(); ctx.ellipse(17, -9, 7, 5, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = '#0D47A1'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.ellipse(17, -9, 7, 5, 0, 0, Math.PI * 2); ctx.stroke();
+        } else if (ch.id === 'dog') {
+            ctx.fillStyle = ch.bodyColor;
+            ctx.beginPath(); ctx.ellipse(0, 3, 16, 13, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = ch.bellyColor;
+            ctx.beginPath(); ctx.ellipse(2, 7, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = ch.bodyColor;
+            ctx.beginPath(); ctx.ellipse(14, -6, 11, 11, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = ch.bellyColor;
+            ctx.beginPath(); ctx.ellipse(22, -2, 7, 6, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#212121';
+            ctx.beginPath(); ctx.ellipse(27, -3, 3.5, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#6D4C41';
+            ctx.beginPath(); ctx.ellipse(8, -8, 6, 11, -0.4, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(16, -9, 4.5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#4E342E'; ctx.beginPath(); ctx.arc(17, -9, 2.5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'black'; ctx.beginPath(); ctx.arc(17.5, -9, 1.5, 0, Math.PI * 2); ctx.fill();
+            // Red collar
+            ctx.fillStyle = '#D32F2F';
+            ctx.beginPath(); ctx.ellipse(12, 4, 14, 3, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(18, 7, 3, 0, Math.PI * 2); ctx.fill();
+        } else if (ch.id === 'blizard') {
+            ctx.fillStyle = ch.bodyColor;
+            ctx.beginPath(); ctx.ellipse(0, 2, 16, 14, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = ch.bellyColor;
+            ctx.beginPath(); ctx.ellipse(2, 6, 10, 8, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#263238';
+            ctx.beginPath(); ctx.arc(-5, -5, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(6, -3, 2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = ch.bodyColor;
+            ctx.beginPath(); ctx.ellipse(12, -6, 10, 9, -0.2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#455A64';
+            ctx.beginPath(); ctx.ellipse(20, -4, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#CFD8DC'; ctx.beginPath(); ctx.arc(14, -9, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#FF6F00'; ctx.beginPath(); ctx.arc(15, -9, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'black'; ctx.beginPath(); ctx.ellipse(15.5, -9, 1, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+            // Crest
+            ctx.fillStyle = '#455A64';
+            ctx.beginPath(); ctx.moveTo(6, -14); ctx.lineTo(10, -20); ctx.lineTo(14, -14); ctx.fill();
+        }
+
+        ctx.restore();
+
+        // Name
+        ctx.fillStyle = selected ? '#FFD600' : 'white';
+        ctx.font = `bold ${selected ? 22 : 18}px Comic Sans MS`;
+        ctx.textAlign = 'center';
+        ctx.fillText(ch.name, x + 20, y + 180);
+
+        // Description
+        ctx.fillStyle = '#B0BEC5';
+        ctx.font = '13px Comic Sans MS';
+        if (ch.id === 'croc') ctx.fillText('Cool blue sunglasses!', x + 20, y + 205);
+        else if (ch.id === 'dog') ctx.fillText('Loyal red collar!', x + 20, y + 205);
+        else ctx.fillText('Sleek and stealthy!', x + 20, y + 205);
+    });
+
+    ctx.fillStyle = '#78909C';
+    ctx.font = '14px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('Left/Right to select, Enter to start, ESC to go back', W/2, H - 30);
+    ctx.textAlign = 'left';
+}
+
+function drawPause() {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 48px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W/2, 180);
+
+    const items = ['Resume', 'Save Game', 'Save & Quit'];
+    items.forEach((item, i) => {
+        const y = 280 + i * 60;
+        const selected = pauseSelection === i;
+        ctx.fillStyle = selected ? 'rgba(255,214,0,0.3)' : 'rgba(0,0,0,0.3)';
+        ctx.fillRect(W/2 - 140, y - 22, 280, 48);
+        if (selected) {
+            ctx.strokeStyle = '#FFD600';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(W/2 - 140, y - 22, 280, 48);
+        }
+        ctx.fillStyle = selected ? '#FFD600' : 'white';
+        ctx.font = `bold ${selected ? 26 : 22}px Comic Sans MS`;
+        ctx.fillText(item, W/2, y + 8);
+    });
+    ctx.textAlign = 'left';
+}
+
+function drawDead() {
+    ctx.fillStyle = 'rgba(100,0,0,0.8)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#F44336';
+    ctx.font = 'bold 52px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('OH NO!', W/2, 180);
+
+    ctx.fillStyle = '#FFCDD2';
+    ctx.font = '22px Comic Sans MS';
+    ctx.fillText('The lizards got you!', W/2, 230);
+
+    const items = ['Try Again', 'Quit to Menu'];
+    items.forEach((item, i) => {
+        const y = 340 + i * 60;
+        const selected = deathSelection === i;
+        ctx.fillStyle = selected ? 'rgba(255,214,0,0.3)' : 'rgba(0,0,0,0.3)';
+        ctx.fillRect(W/2 - 140, y - 22, 280, 48);
+        if (selected) {
+            ctx.strokeStyle = '#FFD600';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(W/2 - 140, y - 22, 280, 48);
+        }
+        ctx.fillStyle = selected ? '#FFD600' : 'white';
+        ctx.font = `bold ${selected ? 26 : 22}px Comic Sans MS`;
+        ctx.fillText(item, W/2, y + 8);
+    });
+    ctx.textAlign = 'left';
+}
+
+function drawLevelComplete() {
+    ctx.fillStyle = 'rgba(0,50,0,0.8)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#FFD600';
+    ctx.font = 'bold 52px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('LEVEL COMPLETE!', W/2, 200);
+
+    ctx.fillStyle = '#A5D6A7';
+    ctx.font = '22px Comic Sans MS';
+    ctx.fillText(`You cleared ${levelData ? levelData.name : 'the level'}!`, W/2, 260);
+
+    // Stars
+    for (let i = 0; i < 3; i++) {
+        const sx = W/2 - 80 + i * 80;
+        const sy = 310;
+        ctx.fillStyle = '#FFD600';
+        drawStar(ctx, sx, sy, 5, 25, 12);
+    }
+
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 22px Comic Sans MS';
+    ctx.fillText('Press Enter to continue', W/2, 400);
+    ctx.textAlign = 'left';
+}
+
+function drawGameWin() {
+    // Fireworks background
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#1A237E');
+    grad.addColorStop(1, '#311B92');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Confetti
+    for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = ['#F44336','#4CAF50','#2196F3','#FFEB3B','#FF9800','#E040FB'][i % 6];
+        const cx = (Date.now() / 15 + i * 60) % W;
+        const cy = (Date.now() / 25 + i * 40) % H;
+        ctx.fillRect(cx, cy, 8 + Math.sin(i) * 4, 8 + Math.cos(i) * 4);
+    }
+
+    ctx.fillStyle = '#FFD600';
+    ctx.font = 'bold 58px Comic Sans MS';
+    ctx.textAlign = 'center';
+    ctx.fillText('YOU WIN!', W/2, 170);
+
+    ctx.fillStyle = '#A5D6A7';
+    ctx.font = '26px Comic Sans MS';
+    ctx.fillText('You escaped the Lizard Laboratory!', W/2, 230);
+    ctx.fillText('All the green lizards are defeated!', W/2, 270);
+
+    // Big stars
+    for (let i = 0; i < 5; i++) {
+        const sx = W/2 - 160 + i * 80;
+        const sy = 340;
+        ctx.fillStyle = '#FFD600';
+        const bounce = Math.sin(Date.now() / 300 + i) * 8;
+        drawStar(ctx, sx, sy + bounce, 5, 28, 14);
+    }
+
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 20px Comic Sans MS';
+    ctx.fillText('Press Enter to return to menu', W/2, 440);
+    ctx.textAlign = 'left';
+}
+
+function drawStar(c, cx, cy, spikes, outerR, innerR) {
+    c.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const angle = (i * Math.PI / spikes) - Math.PI / 2;
+        const x = cx + Math.cos(angle) * r;
+        const y = cy + Math.sin(angle) * r;
+        if (i === 0) c.moveTo(x, y);
+        else c.lineTo(x, y);
+    }
+    c.closePath();
+    c.fill();
+}
+
+// ===================== SAVE / LOAD =====================
+function saveGame() {
+    const data = {
+        charId: selectedChar,
+        level: currentLevel,
+        playerHp: player ? player.hp : 100,
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    hasSave = true;
+}
+
+function loadSave() {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    try {
+        const data = JSON.parse(raw);
+        selectedChar = data.charId;
+        currentLevel = data.level;
+        loadLevel(data.level);
+        if (player && data.playerHp) player.hp = Math.min(data.playerHp, player.maxHp);
+        return true;
+    } catch(e) {
+        localStorage.removeItem(SAVE_KEY);
+        return false;
+    }
+}
+
+function checkSave() {
+    hasSave = !!localStorage.getItem(SAVE_KEY);
+    menuSelection = 0;
+}
+
+// ===================== MAIN RENDER =====================
+function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    if (state === 'menu') { drawMenu(); return; }
+    if (state === 'charSelect') { drawCharSelect(); return; }
+    if (state === 'gameWin') { drawGameWin(); return; }
+
+    // Draw game world
+    drawBackground();
+
+    // Draw tiles
+    if (levelData) {
+        const startTX = Math.max(0, Math.floor(camera.x / TILE) - 1);
+        const endTX = Math.min(levelData.width, Math.ceil((camera.x + W) / TILE) + 1);
+        const startTY = Math.max(0, Math.floor(camera.y / TILE) - 1);
+        const endTY = Math.min(levelData.height, Math.ceil((camera.y + H) / TILE) + 1);
+        for (let ty = startTY; ty < endTY; ty++) {
+            for (let tx = startTX; tx < endTX; tx++) {
+                drawTile(tx, ty);
+            }
+        }
+    }
+
+    // Draw enemies
+    enemies.forEach(e => { if (!e.dead) drawCharacter(e, true); });
+
+    // Draw player
+    if (player) drawCharacter(player, false);
+
+    // Draw particles
+    particles.forEach(p => {
+        ctx.globalAlpha = p.life / 50;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x - camera.x, p.y - camera.y, p.size, p.size);
+    });
+    ctx.globalAlpha = 1;
+
+    // Draw HUD
+    drawHUD();
+
+    // Overlays
+    if (state === 'paused') drawPause();
+    if (state === 'dead') drawDead();
+    if (state === 'levelComplete') drawLevelComplete();
+}
+
+// ===================== GAME LOOP =====================
+checkSave();
+
+function gameLoop() {
+    update();
+    render();
+    requestAnimationFrame(gameLoop);
+}
+gameLoop();
+</script>
+</body>
+</html>
