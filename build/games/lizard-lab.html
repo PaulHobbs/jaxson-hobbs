@@ -24,6 +24,51 @@
             border-radius: 12px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.5);
             display: block;
+            max-width: 100vw;
+            max-height: 100vh;
+            touch-action: none;
+        }
+        /* Touch controls */
+        .touch-controls {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            pointer-events: none;
+        }
+        .touch-btn {
+            position: fixed;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            border: 3px solid rgba(255,255,255,0.4);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            font-family: 'Comic Sans MS', cursive;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        .touch-btn:active, .touch-btn.pressed {
+            background: rgba(255,255,255,0.45);
+        }
+        .tc-left { bottom: 20px; left: 15px; width: 65px; height: 65px; font-size: 26px; }
+        .tc-right { bottom: 20px; left: 95px; width: 65px; height: 65px; font-size: 26px; }
+        .tc-jump { bottom: 20px; right: 15px; width: 75px; height: 75px; font-size: 14px; }
+        .tc-punch { bottom: 110px; right: 15px; width: 65px; height: 65px; font-size: 14px; background: rgba(255,100,100,0.25); border-color: rgba(255,100,100,0.5); }
+        .tc-interact { bottom: 110px; right: 95px; width: 55px; height: 55px; font-size: 12px; background: rgba(100,200,255,0.25); border-color: rgba(100,200,255,0.5); }
+        .tc-pause { top: 10px; right: 10px; width: 44px; height: 44px; font-size: 20px; background: rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.3); border-radius: 10px; }
+        .tc-confirm { bottom: 100px; left: 50%; transform: translateX(-50%); width: auto; height: 50px; padding: 0 30px; border-radius: 25px; font-size: 16px; background: rgba(255,214,0,0.3); border-color: rgba(255,214,0,0.6); }
+        .tc-up { bottom: 200px; left: 50%; transform: translateX(-50%) translateX(-40px); width: 55px; height: 55px; font-size: 22px; background: rgba(200,200,200,0.2); }
+        .tc-down { bottom: 200px; left: 50%; transform: translateX(-50%) translateX(40px); width: 55px; height: 55px; font-size: 22px; background: rgba(200,200,200,0.2); }
+        .tc-menu-left { bottom: 200px; left: 50%; transform: translateX(-50%) translateX(-40px); width: 55px; height: 55px; font-size: 22px; background: rgba(200,200,200,0.2); }
+        .tc-menu-right { bottom: 200px; left: 50%; transform: translateX(-50%) translateX(40px); width: 55px; height: 55px; font-size: 22px; background: rgba(200,200,200,0.2); }
+        @media (pointer: coarse) {
+            .touch-controls { display: block; }
+            body { overflow: hidden; }
         }
     </style>
 </head>
@@ -1730,6 +1775,130 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 gameLoop();
+
+// ===================== TOUCH CONTROLS =====================
+(function() {
+    const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+    // Touch controls container
+    const tc = document.createElement('div');
+    tc.className = 'touch-controls';
+    tc.id = 'touch-controls';
+
+    // Game controls (shown during playing)
+    tc.innerHTML = `
+        <div class="touch-btn tc-left" data-action="left">&#9664;</div>
+        <div class="touch-btn tc-right" data-action="right">&#9654;</div>
+        <div class="touch-btn tc-jump" data-action="jump">JUMP</div>
+        <div class="touch-btn tc-punch" data-action="punch">PUNCH</div>
+        <div class="touch-btn tc-interact" data-action="interact">USE</div>
+        <div class="touch-btn tc-pause" data-action="pause">&#9776;</div>
+        <div class="touch-btn tc-confirm" data-action="confirm">OK / SELECT</div>
+        <div class="touch-btn tc-up" data-action="up">&#9650;</div>
+        <div class="touch-btn tc-down" data-action="down">&#9660;</div>
+        <div class="touch-btn tc-menu-left" data-action="menu-left" style="display:none">&#9664;</div>
+        <div class="touch-btn tc-menu-right" data-action="menu-right" style="display:none">&#9654;</div>
+    `;
+    document.body.appendChild(tc);
+
+    // Map actions to key codes
+    const actionToKeys = {
+        'left':      ['ArrowLeft'],
+        'right':     ['ArrowRight'],
+        'jump':      ['Space'],
+        'punch':     ['KeyX'],
+        'interact':  ['KeyE'],
+        'pause':     ['Escape'],
+        'confirm':   ['Enter'],
+        'up':        ['ArrowUp'],
+        'down':      ['ArrowDown'],
+        'menu-left': ['ArrowLeft'],
+        'menu-right':['ArrowRight'],
+    };
+
+    function pressKeys(action) {
+        const codes = actionToKeys[action];
+        if (codes) codes.forEach(code => { keys[code] = true; });
+    }
+    function releaseKeys(action) {
+        const codes = actionToKeys[action];
+        if (codes) codes.forEach(code => { keys[code] = false; });
+    }
+
+    // Track active touches per button
+    const activeTouches = new Map();
+
+    tc.querySelectorAll('.touch-btn').forEach(btn => {
+        const action = btn.dataset.action;
+
+        btn.addEventListener('touchstart', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            btn.classList.add('pressed');
+            // Track this touch
+            for (const touch of e.changedTouches) {
+                activeTouches.set(touch.identifier, action);
+            }
+            pressKeys(action);
+        }, { passive: false });
+
+        btn.addEventListener('touchend', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            btn.classList.remove('pressed');
+            for (const touch of e.changedTouches) {
+                activeTouches.delete(touch.identifier);
+            }
+            releaseKeys(action);
+        }, { passive: false });
+
+        btn.addEventListener('touchcancel', e => {
+            btn.classList.remove('pressed');
+            for (const touch of e.changedTouches) {
+                activeTouches.delete(touch.identifier);
+            }
+            releaseKeys(action);
+        });
+    });
+
+    // Show/hide appropriate buttons based on game state
+    const gameButtons = ['.tc-left', '.tc-right', '.tc-jump', '.tc-punch', '.tc-interact'];
+    const menuVButtons = ['.tc-up', '.tc-down', '.tc-confirm'];
+    const menuHButtons = ['.tc-menu-left', '.tc-menu-right', '.tc-confirm'];
+    const allButtons = [...gameButtons, ...menuVButtons, '.tc-pause', '.tc-menu-left', '.tc-menu-right'];
+
+    function updateTouchUI() {
+        const isPlaying = state === 'playing';
+        const isCharSelect = state === 'charSelect';
+        const isMenu = state === 'menu' || state === 'paused' || state === 'dead';
+        const isPrompt = state === 'levelComplete' || state === 'gameWin';
+
+        allButtons.forEach(sel => {
+            const el = tc.querySelector(sel);
+            if (el) el.style.display = 'none';
+        });
+
+        if (isPlaying) {
+            gameButtons.forEach(sel => { const el = tc.querySelector(sel); if (el) el.style.display = 'flex'; });
+            tc.querySelector('.tc-pause').style.display = 'flex';
+        } else if (isCharSelect) {
+            tc.querySelector('.tc-menu-left').style.display = 'flex';
+            tc.querySelector('.tc-menu-right').style.display = 'flex';
+            tc.querySelector('.tc-confirm').style.display = 'flex';
+        } else if (isMenu) {
+            menuVButtons.forEach(sel => { const el = tc.querySelector(sel); if (el) el.style.display = 'flex'; });
+        } else if (isPrompt) {
+            tc.querySelector('.tc-confirm').style.display = 'flex';
+        }
+    }
+
+    // Poll game state to update touch UI
+    setInterval(updateTouchUI, 200);
+
+    // Prevent default touch behavior on canvas
+    canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+    canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+})();
 </script>
 </body>
 </html>

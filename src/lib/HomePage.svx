@@ -29,8 +29,16 @@ Here's the first game we're making:
 - [FastRunner](/games/fast-runner.html)
 - [Lizard Laboratory](/games/lizard-lab.html)
 - [Tower Builder!](/games/tower-builder.html)
+- [Car Builder Racing!](/games/car-builder)
+- [Train Tycoon!](/games/train-tycoon)
+- [JAILBREAK!!](/games/jailbreak.html)
+- [Hero of Olympus!](/games/hero-of-olympus.html)
 
 
 ## Art
 
 [Click here for some of my art](/art).
+
+## Tier lists
+
+- [Super Mario 3D World Enemies](/tiers/super-mario-3d-world-enemies.png)

@@ -13,9 +13,49 @@
             min-height: 100vh;
             margin: 0;
             background-color: #222;
+            overflow: hidden;
+            touch-action: none;
         }
         canvas {
             border: 1px solid white;
+            max-width: 100vw;
+            max-height: 100vh;
+        }
+        /* Touch controls */
+        .touch-controls {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            pointer-events: none;
+        }
+        .touch-btn {
+            position: fixed;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.25);
+            border: 3px solid rgba(255,255,255,0.5);
+            color: white;
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        .touch-btn:active, .touch-btn.pressed {
+            background: rgba(255,255,255,0.5);
+        }
+        .btn-left { bottom: 20px; left: 20px; }
+        .btn-right { bottom: 20px; left: 110px; }
+        .btn-jump { bottom: 20px; right: 20px; width: 90px; height: 90px; font-size: 32px; }
+        @media (pointer: coarse) {
+            .touch-controls { display: block; }
         }
     </style>
 </head>
@@ -405,6 +445,57 @@ const config = {
 
 // Create the Phaser game instance
 const game = new Phaser.Game(config);
+
+// ===================== TOUCH CONTROLS =====================
+(function() {
+    const touchState = { left: false, right: false, up: false };
+
+    // Create touch buttons
+    const container = document.createElement('div');
+    container.className = 'touch-controls';
+    container.innerHTML = `
+        <div class="touch-btn btn-left" data-key="left">◀</div>
+        <div class="touch-btn btn-right" data-key="right">▶</div>
+        <div class="touch-btn btn-jump" data-key="up">▲ JUMP</div>
+    `;
+    document.body.appendChild(container);
+
+    // Map touch buttons to simulated key state
+    function setKey(key, down) {
+        touchState[key] = down;
+        // Access the running scene and inject into cursors
+        const scene = game.scene.getScene('GameScene');
+        if (scene && scene.cursors) {
+            if (key === 'left') scene.cursors.left.isDown = down;
+            if (key === 'right') scene.cursors.right.isDown = down;
+            if (key === 'up') scene.cursors.up.isDown = down;
+        }
+    }
+
+    container.querySelectorAll('.touch-btn').forEach(btn => {
+        const key = btn.dataset.key;
+
+        btn.addEventListener('touchstart', e => {
+            e.preventDefault();
+            btn.classList.add('pressed');
+            setKey(key, true);
+        }, { passive: false });
+
+        btn.addEventListener('touchend', e => {
+            e.preventDefault();
+            btn.classList.remove('pressed');
+            setKey(key, false);
+        }, { passive: false });
+
+        btn.addEventListener('touchcancel', e => {
+            btn.classList.remove('pressed');
+            setKey(key, false);
+        });
+    });
+
+    // Prevent page scroll/zoom on touch
+    document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+})();
 
 </script>
 
