@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JAILBREAK!!</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Arial Black', Arial, sans-serif;
+    }
+    canvas { display: block; image-rendering: pixelated; max-width: 100vw; max-height: 100vh; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ============================================================
+//  JAILBREAK!! — Anime Terraria-style escape game
+//  Controls: Arrow/WASD = move, W/Up/Space = jump
+//            E = pick up item near you
+//            Space = use held item
+// ============================================================
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width  = 800;
+canvas.height = 500;
+
+// ---- TILES -------------------------------------------------
+const T = { AIR:0, STONE:1, DIRT:2, BRICK:3, BAR:4,
+            LOCKED:5, DOOR:6, DEEP:7, GRASS:8, FREEDOM:9 };
+
+const TSIZE = 32;
+const WW = 50, WH = 28;
+
+function solidTile(t) {
+  return t===T.STONE||t===T.DIRT||t===T.BRICK||
+         t===T.BAR||t===T.LOCKED||t===T.DEEP||t===T.GRASS;
+}
+
+// ---- WORLD BUILD -------------------------------------------
+let world = [];
+function initWorld() {
+  world = [];
+  for (let y=0;y<WH;y++) { world[y]=[]; for(let x=0;x<WW;x++) world[y][x]=T.AIR; }
+
+  // Boundaries
+  for (let y=0;y<WH;y++) for(let x=0;x<WW;x++) {
+    if(x<2||x>=WW-2||y<2||y>=WH-2) world[y][x]=T.DEEP;
+  }
+
+  // Underground dirt
+  for (let y=19;y<WH-2;y++) for(let x=2;x<WW-2;x++) world[y][x]=T.DIRT;
+
+  // Prison ceiling (rows 4-5, cols 3-22)
+  for(let x=3;x<=22;x++) { world[4][x]=T.BRICK; world[5][x]=T.BRICK; }
+
+  // Left wall (cols 3-4, rows 4-19)
+  for(let y=4;y<=19;y++) { world[y][3]=T.BRICK; world[y][4]=T.BRICK; }
+
+  // Right prison outer wall (cols 21-22, rows 4-19) with escape gap at rows 14-17
+  for(let y=4;y<=19;y++) { world[y][21]=T.BRICK; world[y][22]=T.BRICK; }
+  // Escape gap — weak spot in outer wall players can dash through after breaking bars/lock
+  for(let y=14;y<=17;y++) { world[y][21]=T.AIR; world[y][22]=T.AIR; }
+
+  // Prison floor (rows 18-19, cols 3-22)
+  for(let x=3;x<=22;x++) { world[18][x]=T.STONE; world[19][x]=T.STONE; }
+
+  // BARS at col 12, rows 6-17
+  for(let y=6;y<=17;y++) world[y][12]=T.BAR;
+
+  // Locked door within bars (rows 14-15 col 12 replaced with LOCKED)
+  world[14][12]=T.LOCKED;
+  world[15][12]=T.LOCKED;
+
+  // Freedom zone floor (rows 18-19, cols 23-47)
+  for(let x=23;x<=47;x++) { world[18][x]=T.STONE; world[19][x]=T.STONE; }
+
+  // Grass on top of freedom
+  for(let x=23;x<=47;x++) { world[17][x]=T.AIR; } // ensure air
+
+  // Freedom sky
+  for(let y=6;y<=17;y++) for(let x=23;x<=47;x++) world[y][x]=T.AIR;
+  for(let y=4;y<=5;y++)  for(let x=23;x<=47;x++) world[y][x]=T.AIR;
+
+  // Freedom marker sign col 25
+  // (just kept as open air — we detect it by position)
+
+  // Underground tunnel passage slot (cols 23+, rows 20-23, will be revealed by shovel)
+  // starts as dirt, shovel digs it
+}
+
+// ---- ITEMS -------------------------------------------------
+const ITEM = { STRENGTH:'strength', HAMMER:'hammer', SHOVEL:'shovel' };
+let items = [];
+function initItems() {
+  items = [
+    { type:ITEM.STRENGTH, wx:6.5*TSIZE, wy:17*TSIZE-8, picked:false },
+    { type:ITEM.HAMMER,   wx:8.5*TSIZE, wy:17*TSIZE-8, picked:false },
+    { type:ITEM.SHOVEL,   wx:10.5*TSIZE,wy:17*TSIZE-8, picked:false },
+  ];
+}
+
+// ---- PLAYER ------------------------------------------------
+let player;
+function initPlayer() {
+  player = {
+    wx: 8*TSIZE, wy: 14*TSIZE,
+    w:22, h:30,
+    vx:0, vy:0,
+    onGround:false,
+    facing:1,
+    inventory:null,
+    animF:0, animT:0,
+    using:false,
+  };
+}
+
+// ---- GUARD -------------------------------------------------
+let guard;
+function initGuard() {
+  guard = {
+    wx:16*TSIZE, wy:14*TSIZE,
+    w:22, h:30,
+    vx:0, vy:0,
+    onGround:false,
+    facing:-1,
+    patrolLeft:14*TSIZE+8,
+    patrolRight:20*TSIZE,
+    alerted:false,
+    alertCooldown:0,
+    chasing:false,
+    animF:0, animT:0,
+  };
+}
+
+// ---- CAMERA ------------------------------------------------
+let cam = {x:0, y:0};
+function updateCam() {
+  cam.x = player.wx + player.w/2 - canvas.width/2;
+  cam.y = player.wy + player.h/2 - canvas.height/2;
+  cam.x = Math.max(0, Math.min(cam.x, WW*TSIZE - canvas.width));
+  cam.y = Math.max(0, Math.min(cam.y, WH*TSIZE - canvas.height));
+}
+
+// ---- EFFECTS -----------------------------------------------
+let particles = [];
+let shake = {t:0, mx:0, my:0};
+let flash  = {t:0, color:'white'};
+let dramaText = {lines:[], colors:[], t:0, maxT:0, scale:0};
+let bgPulse = 0;
+
+function boom(wx, wy, color, n, spread) {
+  spread = spread||8;
+  for(let i=0;i<n;i++) {
+    let a = Math.random()*Math.PI*2;
+    let s = 1+Math.random()*spread;
+    particles.push({
+      x:wx, y:wy, vx:Math.cos(a)*s, vy:Math.sin(a)*s-1,
+      color, life:30+Math.random()*50, maxLife:80,
+      size:2+Math.random()*5, gravity:0.25
+    });
+  }
+}
+
+function startShake(intensity, frames) { shake.t = frames; shake.intensity = intensity; }
+function startFlash(color, frames) { flash.t = frames; flash.color = color; flash.max = frames; }
+
+function showDrama(lines, colors, duration) {
+  dramaText = { lines, colors, t:duration, maxT:duration, scale:0 };
+}
+
+// ---- INPUT -------------------------------------------------
+const keys = {};
+document.addEventListener('keydown', e=>{
+  keys[e.code]=true;
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  if(e.code==='KeyE') tryPickup();
+  if(e.code==='Space') tryUse();
+  if((e.code==='KeyR') && (gameState==='escaped'||gameState==='caught')) resetGame();
+});
+document.addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+function tryPickup() {
+  if(gameState!=='playing') return;
+  let px=player.wx+player.w/2, py=player.wy+player.h/2;
+  for(let item of items) {
+    if(item.picked) continue;
+    let dx=item.wx-px, dy=item.wy-py;
+    if(Math.sqrt(dx*dx+dy*dy)<48) {
+      if(player.inventory) {
+        showHint('Already holding '+player.inventory.toUpperCase()+'! Use [SPACE] first.');
+        return;
+      }
+      player.inventory=item.type;
+      item.picked=true;
+      boom(item.wx, item.wy, '#ffee00', 18, 6);
+      startFlash('#ffee00',8);
+      break;
+    }
+  }
+}
+
+function tryUse() {
+  if(gameState!=='playing'||!player.inventory) return;
+  let px=Math.floor((player.wx+player.w/2)/TSIZE);
+  let py=Math.floor((player.wy+player.h/2)/TSIZE);
+
+  if(player.inventory===ITEM.STRENGTH) {
+    // Check if near bars (within 2 tiles right/left)
+    let found=false;
+    for(let dy=-2;dy<=2&&!found;dy++) for(let dx=-2;dx<=2&&!found;dx++) {
+      if(getTile(px+dx,py+dy)===T.BAR||getTile(px+dx,py+dy)===T.LOCKED) {
+        found=true;
+        // BREAK ALL BARS IN COL 12
+        let barCol=px+dx;
+        for(let row=0;row<WH;row++) {
+          if(world[row][barCol]===T.BAR||world[row][barCol]===T.LOCKED) {
+            world[row][barCol]=T.AIR;
+            boom(barCol*TSIZE+16, row*TSIZE+16, '#ff4400', 5, 10);
+          }
+        }
+        startShake(18, 45);
+        startFlash('#ff6600', 20);
+        bgPulse=60;
+        escapeMethod='strength';
+        guard.alerted=true; guard.alertCooldown=400; guard.chasing=true;
+        showDrama(
+          ['INCREDIBLE POWER!!','THE BARS ARE DUST!!'],
+          ['#ff4400','#ffcc00'], 180
+        );
+      }
+    }
+    if(!found) showHint('Get closer to the BARS!');
+  }
+
+  if(player.inventory===ITEM.HAMMER) {
+    // Check if near locked door
+    let found=false;
+    for(let dy=-2;dy<=2&&!found;dy++) for(let dx=-2;dx<=2&&!found;dx++) {
+      if(getTile(px+dx,py+dy)===T.LOCKED) {
+        found=true;
+        let lx=px+dx, ly=py+dy;
+        // Open a big gap — bars at rows 6-17, player needs rows 15-17 clear to walk through
+        for(let row=ly-2;row<=ly+3;row++) {
+          if(world[row]&&(world[row][lx]===T.LOCKED||world[row][lx]===T.BAR)) {
+            world[row][lx]=T.DOOR;
+          }
+        }
+        startShake(10, 30);
+        startFlash('#ffaa00', 15);
+        escapeMethod='hammer';
+        showDrama(
+          ['LOCK SMASHED!!','SNEAK THROUGH FAST!!'],
+          ['#ffaa00','#ffffff'], 150
+        );
+        boom(lx*TSIZE+16, ly*TSIZE+16, '#ffaa00', 30, 8);
+      }
+    }
+    if(!found) showHint('Find the LOCKED DOOR in the bars!');
+  }
+
+  if(player.inventory===ITEM.SHOVEL) {
+    // Dig through floor below player
+    let fx=px, fy=py+1;
+    if(getTile(fx,fy)===T.STONE||getTile(fx,fy)===T.DIRT||getTile(fx,fy)===T.GRASS) {
+      // Dig a tunnel: break floor and carve passage right to freedom
+      for(let row=fy;row<=fy+4;row++) {
+        if(world[row]) { world[row][fx]=T.AIR; world[row][fx+1]=T.AIR; }
+      }
+      // Underground tunnel at rows 19-20 — shallow enough to jump out from
+      for(let col=fx;col<=26;col++) {
+        if(world[19]) { world[19][col]=T.AIR; world[20][col]=T.AIR; }
+      }
+      // Exit shaft up at col 25 — clears path from tunnel to freedom zone
+      for(let row=14;row<=20;row++) {
+        if(world[row]) { world[row][25]=T.AIR; world[row][26]=T.AIR; }
+      }
+      startShake(14, 40);
+      startFlash('#44ff88', 15);
+      escapeMethod='shovel';
+      showDrama(
+        ['DIGGING TO FREEDOM!!','NOTHING CAN STOP ME!!'],
+        ['#44ff88','#ffee00'], 160
+      );
+      boom(fx*TSIZE+16, fy*TSIZE+16, '#44ff88', 35, 8);
+    } else {
+      showHint('Stand over the FLOOR to dig!');
+    }
+  }
+}
+
+// ---- HINT --------------------------------------------------
+let hint = {text:'', t:0};
+function showHint(text) { hint.text=text; hint.t=120; }
+
+// ---- TILE HELPERS ------------------------------------------
+function getTile(tx,ty) {
+  if(tx<0||tx>=WW||ty<0||ty>=WH) return T.DEEP;
+  return world[ty][tx];
+}
+
+// ---- PHYSICS -----------------------------------------------
+function moveEntity(ent) {
+  ent.vy += 0.55; // gravity
+  if(ent.vy>16) ent.vy=16;
+
+  ent.wx += ent.vx;
+  resolveX(ent);
+  ent.wy += ent.vy;
+  ent.onGround = false;
+  resolveY(ent);
+}
+
+function resolveX(e) {
+  let corners = [
+    [e.wx,       e.wy+4],
+    [e.wx,       e.wy+e.h-4],
+    [e.wx+e.w,   e.wy+4],
+    [e.wx+e.w,   e.wy+e.h-4],
+  ];
+  for(let [px,py] of corners) {
+    let tx=Math.floor(px/TSIZE), ty=Math.floor(py/TSIZE);
+    if(solidTile(getTile(tx,ty))) {
+      if(e.vx>0) e.wx = tx*TSIZE - e.w - 0.1;
+      else       e.wx = tx*TSIZE + TSIZE + 0.1;
+      e.vx=0; return;
+    }
+  }
+}
+
+function resolveY(e) {
+  let corners = [
+    [e.wx+3,     e.wy],
+    [e.wx+e.w-3, e.wy],
+    [e.wx+3,     e.wy+e.h],
+    [e.wx+e.w-3, e.wy+e.h],
+  ];
+  for(let [px,py] of corners) {
+    let tx=Math.floor(px/TSIZE), ty=Math.floor(py/TSIZE);
+    if(solidTile(getTile(tx,ty))) {
+      if(e.vy>0) { e.wy = ty*TSIZE - e.h; e.onGround=true; }
+      else        e.wy = ty*TSIZE + TSIZE;
+      e.vy=0; return;
+    }
+  }
+}
+
+// ---- GAME STATE --------------------------------------------
+let gameState='playing';
+let escapeMethod='';
+
+function resetGame() {
+  initWorld(); initItems(); initPlayer(); initGuard();
+  particles=[]; shake={t:0}; flash={t:0};
+  dramaText={lines:[],t:0}; hint={t:0};
+  gameState='playing'; escapeMethod=''; bgPulse=0;
+}
+
+// ---- UPDATE ------------------------------------------------
+function update() {
+  // Shake
+  if(shake.t>0) {
+    shake.t--;
+    let s = shake.t * (shake.intensity||10) / 45;
+    shake.mx = (Math.random()-0.5)*s;
+    shake.my = (Math.random()-0.5)*s;
+  } else { shake.mx=0; shake.my=0; }
+
+  // Flash
+  if(flash.t>0) flash.t--;
+
+  // Drama text
+  if(dramaText.t>0) {
+    dramaText.t--;
+    let prog = 1 - dramaText.t/dramaText.maxT;
+    dramaText.scale = Math.min(1.2, prog*4);
+  }
+
+  // Hints
+  if(hint.t>0) hint.t--;
+
+  // Background pulse
+  if(bgPulse>0) bgPulse--;
+
+  // Particles
+  particles = particles.filter(p=>p.life>0);
+  for(let p of particles) {
+    p.x+=p.vx; p.y+=p.vy;
+    p.vy+=p.gravity||0;
+    p.vx*=0.95;
+    p.life--;
+  }
+
+  if(gameState!=='playing') return;
+
+  // -- Player input
+  let spd = 3.8;
+  let moving=false;
+  if(keys['ArrowLeft']||keys['KeyA']) { player.vx=-spd; player.facing=-1; moving=true; }
+  else if(keys['ArrowRight']||keys['KeyD']) { player.vx=spd; player.facing=1; moving=true; }
+  else player.vx *= 0.65;
+
+  if((keys['ArrowUp']||keys['KeyW'])&&player.onGround) {
+    player.vy=-11; player.onGround=false;
+  }
+
+  // animation
+  player.animT++;
+  if(player.animT>7) { player.animT=0; if(moving&&player.onGround) player.animF=(player.animF+1)%4; else player.animF=0; }
+
+  moveEntity(player);
+
+  // -- Guard AI
+  updateGuard();
+
+  // -- Camera
+  updateCam();
+
+  // -- Escape check
+  checkEscape();
+}
+
+function updateGuard() {
+  if(guard.chasing) {
+    // Chase player
+    let dx = player.wx - guard.wx;
+    guard.vx = Math.sign(dx) * 2.8;
+    guard.facing = Math.sign(dx);
+  } else {
+    // Normal patrol
+    guard.vx = guard.facing * 1.4;
+    if(guard.wx < guard.patrolLeft)  { guard.wx=guard.patrolLeft; guard.facing=1; }
+    if(guard.wx > guard.patrolRight) { guard.wx=guard.patrolRight; guard.facing=-1; }
+  }
+
+  moveEntity(guard);
+
+  // Line-of-sight: guard can only see player if in guard zone (x 12-22) or freedom zone
+  let playerInGuardZone = player.wx > 11.5*TSIZE && player.wx < 22.5*TSIZE && player.wy < 18*TSIZE;
+  let playerInFreedom   = player.wx > 22.5*TSIZE && player.wy < 18*TSIZE;
+
+  if(playerInGuardZone || (playerInFreedom && guard.chasing)) {
+    let dx=player.wx-guard.wx, dy=player.wy-guard.wy;
+    let dist=Math.sqrt(dx*dx+dy*dy);
+    // Guard sees player in his zone
+    if(playerInGuardZone) {
+      if(!guard.alerted) {
+        guard.alerted=true;
+        guard.alertCooldown=200;
+        guard.chasing=true;
+        startShake(8,25);
+        showDrama(['HALT!! PRISONER!!','THE GUARD SAW YOU!!'],['#ff0000','#ffaa00'],120);
+        startFlash('#ff0000',12);
+      }
+    }
+    // Catch
+    if(dist<28 && playerInGuardZone) {
+      gameState='caught';
+      boom(player.wx+11,player.wy+15,'#ff0000',50,9);
+      startShake(25,60);
+      startFlash('#ff0000',40);
+    }
+  }
+
+  if(guard.alertCooldown>0) {
+    guard.alertCooldown--;
+    if(guard.alertCooldown<=0) { guard.alerted=false; guard.chasing=false; }
+  }
+}
+
+function checkEscape() {
+  // Freedom: reach col 23+ above ground
+  if(player.wx > 23.5*TSIZE && player.wy+player.h < 18*TSIZE) {
+    triggerEscape(escapeMethod||'strength');
+  }
+}
+
+function triggerEscape(method) {
+  if(gameState==='escaped') return;
+  gameState='escaped';
+  escapeMethod=method;
+  boom(player.wx+11, player.wy+15, '#ffd700', 80, 12);
+  boom(player.wx+11, player.wy+15, '#ff4400', 50, 10);
+  boom(player.wx+11, player.wy+15, '#ffffff', 40, 8);
+  startShake(22, 60);
+  startFlash('#ffffff', 50);
+  bgPulse=200;
+}
+
+// ---- DRAW --------------------------------------------------
+
+function worldToScreen(wx,wy) {
+  return [wx - cam.x + shake.mx, wy - cam.y + shake.my];
+}
+
+function drawBg() {
+  // Dungeon gradient
+  let g = ctx.createLinearGradient(0,0,0,canvas.height);
+  let pulse = bgPulse>0 ? (bgPulse/200)*0.3 : 0;
+  g.addColorStop(0, `rgb(${10+pulse*80|0},${8},${20+pulse*60|0})`);
+  g.addColorStop(1, `rgb(${20+pulse*60|0},${5},${8})`);
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+
+const TILE_COLORS = {
+  [T.STONE]: ['#7a7a7a','#5a5a5a'],
+  [T.DIRT]:  ['#7a4a28','#5a3418'],
+  [T.BRICK]: ['#8B2020','#6a1818'],
+  [T.BAR]:   ['#b0b0d0','#8888aa'],
+  [T.LOCKED]:['#8B6000','#ffcc00'],
+  [T.DOOR]:  ['#4a3a18','#2a2010'],
+  [T.DEEP]:  ['#1a1a2a','#111120'],
+  [T.GRASS]: ['#4a8a2a','#3a6a1a'],
+};
+
+function drawWorld() {
+  let sx0=Math.max(0,Math.floor(cam.x/TSIZE)-1);
+  let sy0=Math.max(0,Math.floor(cam.y/TSIZE)-1);
+  let sx1=Math.min(WW-1,Math.ceil((cam.x+canvas.width)/TSIZE)+1);
+  let sy1=Math.min(WH-1,Math.ceil((cam.y+canvas.height)/TSIZE)+1);
+
+  for(let ty=sy0;ty<=sy1;ty++) {
+    for(let tx=sx0;tx<=sx1;tx++) {
+      let t=world[ty][tx];
+      if(t===T.AIR) continue;
+      let [sx,sy]=worldToScreen(tx*TSIZE, ty*TSIZE);
+      let colors=TILE_COLORS[t];
+      if(!colors) continue;
+
+      ctx.fillStyle=colors[0];
+      ctx.fillRect(sx,sy,TSIZE,TSIZE);
+
+      // Dark bottom/right edge
+      ctx.fillStyle='rgba(0,0,0,0.35)';
+      ctx.fillRect(sx,sy+TSIZE-4,TSIZE,4);
+      ctx.fillRect(sx+TSIZE-4,sy,4,TSIZE);
+      // Light top/left edge
+      ctx.fillStyle='rgba(255,255,255,0.12)';
+      ctx.fillRect(sx,sy,TSIZE,3);
+      ctx.fillRect(sx,sy,3,TSIZE);
+
+      if(t===T.BRICK) {
+        ctx.fillStyle='rgba(0,0,0,0.3)';
+        ctx.fillRect(sx,sy+TSIZE/2-1,TSIZE,2);
+        ctx.fillRect(sx+TSIZE/2-1,sy,2,TSIZE/2);
+        ctx.fillRect(sx-1,sy+TSIZE/2,2,TSIZE/2);
+      }
+      if(t===T.BAR) {
+        // Repaint as vertical bar
+        ctx.fillStyle='#111';
+        ctx.fillRect(sx,sy,TSIZE,TSIZE);
+        ctx.fillStyle='#c0c0e0';
+        ctx.fillRect(sx+TSIZE/2-5,sy,10,TSIZE);
+        ctx.fillStyle='rgba(255,255,255,0.5)';
+        ctx.fillRect(sx+TSIZE/2-5,sy,3,TSIZE);
+        ctx.fillStyle='#aaaacc';
+        ctx.fillRect(sx,sy+10,TSIZE,4);
+        ctx.fillRect(sx,sy+22,TSIZE,4);
+      }
+      if(t===T.LOCKED) {
+        ctx.fillStyle='rgba(0,0,0,0.4)';
+        ctx.fillRect(sx,sy,TSIZE,TSIZE);
+        ctx.fillStyle='#c0c0e0';
+        ctx.fillRect(sx+TSIZE/2-5,sy,10,TSIZE);
+        ctx.fillStyle='rgba(255,255,255,0.4)';
+        ctx.fillRect(sx+TSIZE/2-5,sy,3,TSIZE);
+        // Lock icon
+        ctx.fillStyle='#ffcc00';
+        ctx.strokeStyle='#ffcc00';
+        ctx.lineWidth=3;
+        ctx.beginPath();
+        ctx.arc(sx+TSIZE/2,sy+12,6,Math.PI,0);
+        ctx.stroke();
+        ctx.fillRect(sx+TSIZE/2-7,sy+10,14,12);
+        ctx.fillStyle='#000';
+        ctx.fillRect(sx+TSIZE/2-2,sy+14,4,5);
+      }
+      if(t===T.DOOR) {
+        ctx.fillStyle='rgba(0,0,0,0.6)';
+        ctx.fillRect(sx,sy,TSIZE,TSIZE);
+        // Broken bar remnants
+        ctx.fillStyle='#555';
+        ctx.fillRect(sx+TSIZE/2-3,sy,5,TSIZE);
+      }
+      if(t===T.STONE||t===T.DEEP) {
+        ctx.fillStyle='rgba(0,0,0,0.12)';
+        ctx.fillRect(sx+6,sy+6,9,8);
+        ctx.fillRect(sx+19,sy+18,7,7);
+      }
+      if(t===T.DIRT) {
+        ctx.fillStyle='rgba(0,0,0,0.1)';
+        ctx.fillRect(sx+5,sy+5,7,6);
+        ctx.fillRect(sx+19,sy+16,6,5);
+      }
+    }
+  }
+}
+
+function drawPerson(e, isGuard) {
+  let [sx,sy]=worldToScreen(e.wx, e.wy);
+  let anim=[0,4,0,-4][e.animF||0]*(e.onGround?1:0);
+  ctx.save();
+  ctx.translate(sx+e.w/2, sy+e.h/2);
+  if(e.facing===-1) ctx.scale(-1,1);
+  let ox=-e.w/2, oy=-e.h/2;
+
+  if(!isGuard) {
+    // Legs
+    ctx.fillStyle='#223366';
+    ctx.fillRect(ox+2,  oy+20+anim, 8, 11);
+    ctx.fillStyle='#1a2855';
+    ctx.fillRect(ox+12, oy+20-anim, 8, 11);
+    // Prison-stripe body
+    ctx.fillStyle='#cc2222';
+    ctx.fillRect(ox+1,  oy+10, 20, 12);
+    for(let i=0;i<3;i++) {
+      ctx.fillStyle='rgba(255,255,255,0.25)';
+      ctx.fillRect(ox+3+i*6, oy+10, 3, 12);
+    }
+    // Arms
+    ctx.fillStyle='#cc2222';
+    ctx.fillRect(ox-4,  oy+10+anim, 6, 9);
+    ctx.fillRect(ox+20, oy+10-anim, 6, 9);
+    // Head
+    ctx.fillStyle='#f5c5aa';
+    ctx.fillRect(ox+4, oy+1, 14, 11);
+    // Hair (spiky anime)
+    ctx.fillStyle='#111';
+    ctx.fillRect(ox+4,  oy+1,  14, 4);
+    ctx.fillRect(ox+8,  oy-4,  4, 6);
+    ctx.fillRect(ox+13, oy-6,  3, 8);
+    ctx.fillRect(ox+4,  oy-2,  3, 5);
+    // Eyes (determined)
+    ctx.fillStyle='#fff';
+    ctx.fillRect(ox+6, oy+5, 4, 3);
+    ctx.fillRect(ox+12,oy+5, 4, 3);
+    ctx.fillStyle='#222';
+    ctx.fillRect(ox+7, oy+6, 2, 2);
+    ctx.fillRect(ox+13,oy+6, 2, 2);
+    // Determined brow
+    ctx.fillStyle='#333';
+    ctx.fillRect(ox+5, oy+4, 6, 2);
+    ctx.fillRect(ox+11,oy+4, 6, 2);
+    // Held item
+    if(e.inventory) {
+      let ix=ox+20, iy=oy+12;
+      if(e.inventory===ITEM.HAMMER) {
+        ctx.fillStyle='#777'; ctx.fillRect(ix,iy+3,16,5);
+        ctx.fillStyle='#555'; ctx.fillRect(ix+10,iy-2,7,13);
+      }
+      if(e.inventory===ITEM.SHOVEL) {
+        ctx.fillStyle='#7a5010'; ctx.fillRect(ix+3,iy-4,4,18);
+        ctx.fillStyle='#888'; ctx.fillRect(ix-1,iy+10,12,7);
+      }
+      if(e.inventory===ITEM.STRENGTH) {
+        let pulse=(Math.sin(Date.now()*0.01)+1)/2;
+        ctx.fillStyle=`rgba(255,${80+pulse*80|0},0,0.9)`;
+        ctx.beginPath(); ctx.arc(ix+6,iy+5,9,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(255,220,0,0.7)';
+        ctx.beginPath(); ctx.arc(ix+4,iy+3,5,0,Math.PI*2); ctx.fill();
+      }
+    }
+  } else {
+    // Guard body
+    ctx.fillStyle='#1a2e1a';
+    ctx.fillRect(ox+2, oy+20+anim, 8, 11);
+    ctx.fillRect(ox+12,oy+20-anim, 8, 11);
+    ctx.fillStyle='#1e4020';
+    ctx.fillRect(ox+1,oy+10,20,12);
+    // Badge
+    ctx.fillStyle='#ffd700';
+    ctx.fillRect(ox+8,oy+12,6,7);
+    // Arms
+    ctx.fillStyle='#1e4020';
+    ctx.fillRect(ox-4,oy+10+anim,6,9);
+    ctx.fillRect(ox+20,oy+10-anim,6,9);
+    // Head
+    ctx.fillStyle='#f5c5aa';
+    ctx.fillRect(ox+4,oy+1,14,11);
+    // Guard hat
+    ctx.fillStyle='#1e4020';
+    ctx.fillRect(ox+2,oy-5,18,7);
+    ctx.fillRect(ox,oy-3,22,3);
+    // Mean eyes
+    ctx.fillStyle='#fff';
+    ctx.fillRect(ox+6,oy+5,4,3);
+    ctx.fillRect(ox+12,oy+5,4,3);
+    ctx.fillStyle='#cc0000';
+    ctx.fillRect(ox+7,oy+6,2,2);
+    ctx.fillRect(ox+13,oy+6,2,2);
+    // Angry brows
+    ctx.fillStyle='#000';
+    ctx.fillRect(ox+5,oy+3,7,2);
+    ctx.fillRect(ox+10,oy+3,7,2);
+    if(guard.alerted) {
+      ctx.fillStyle='#ff0000';
+      ctx.font='bold 22px Arial';
+      ctx.textAlign='center';
+      ctx.fillText('!',0,-15+Math.sin(Date.now()*0.02)*3);
+    }
+  }
+  ctx.restore();
+}
+
+function drawItems() {
+  for(let item of items) {
+    if(item.picked) continue;
+    let [sx,sy]=worldToScreen(item.wx, item.wy);
+    let glow=(Math.sin(Date.now()*0.004)+1)/2;
+    let color=item.type===ITEM.STRENGTH?'#ff6600':item.type===ITEM.HAMMER?'#ffaa00':'#44ff88';
+
+    ctx.save();
+    ctx.globalAlpha=0.3+glow*0.35;
+    ctx.fillStyle=color;
+    ctx.beginPath(); ctx.arc(sx,sy,22,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+
+    if(item.type===ITEM.HAMMER) {
+      ctx.fillStyle='#999'; ctx.fillRect(sx-10,sy-4,20,8);
+      ctx.fillStyle='#666'; ctx.fillRect(sx+4,sy-14,8,22);
+      ctx.fillStyle='#ffee88';
+      ctx.font='bold 11px Arial'; ctx.textAlign='center';
+      ctx.fillText('HAMMER',sx,sy+20);
+    }
+    if(item.type===ITEM.SHOVEL) {
+      ctx.fillStyle='#7a5010'; ctx.fillRect(sx-2,sy-16,5,26);
+      ctx.fillStyle='#888'; ctx.fillRect(sx-9,sy+6,18,8);
+      ctx.fillStyle='#aaffcc';
+      ctx.font='bold 11px Arial'; ctx.textAlign='center';
+      ctx.fillText('SHOVEL',sx,sy+22);
+    }
+    if(item.type===ITEM.STRENGTH) {
+      let p2=(Math.sin(Date.now()*0.006)+1)/2;
+      ctx.fillStyle='#ff4400'; ctx.beginPath(); ctx.arc(sx,sy,12,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=`rgba(255,${160+p2*80|0},0,0.9)`;
+      ctx.beginPath(); ctx.arc(sx-2,sy-2,7,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(sx-4,sy-4,3,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#ffaaaa';
+      ctx.font='bold 11px Arial'; ctx.textAlign='center';
+      ctx.fillText('POWER ORB',sx,sy+22);
+    }
+
+    // E to pick up
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.font='10px Arial'; ctx.textAlign='center';
+    ctx.fillText('[E]',sx,sy+32);
+    ctx.restore();
+  }
+}
+
+function drawParticles() {
+  for(let p of particles) {
+    let [sx,sy]=worldToScreen(p.x, p.y);
+    ctx.save();
+    ctx.globalAlpha=Math.max(0, p.life/p.maxLife);
+    ctx.fillStyle=p.color;
+    ctx.fillRect(sx-p.size/2, sy-p.size/2, p.size, p.size);
+    ctx.restore();
+  }
+}
+
+function drawFlash() {
+  if(flash.t<=0) return;
+  ctx.save();
+  ctx.globalAlpha=(flash.t/(flash.max||20))*0.55;
+  ctx.fillStyle=flash.color;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.restore();
+}
+
+function drawHUD() {
+  // Inventory box
+  ctx.fillStyle='rgba(0,0,0,0.75)';
+  ctx.fillRect(10,10,170,54);
+  ctx.strokeStyle='#ffd700'; ctx.lineWidth=2;
+  ctx.strokeRect(10,10,170,54);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 13px Arial'; ctx.textAlign='left';
+  ctx.fillText('ITEM: '+(player.inventory?player.inventory.toUpperCase():'none'),18,32);
+  if(player.inventory) {
+    ctx.fillStyle='#aaffaa'; ctx.font='11px Arial';
+    ctx.fillText('[SPACE] use item',18,50);
+  }
+
+  // Controls
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(8, canvas.height-68, 330, 62);
+  ctx.fillStyle='#ccc'; ctx.font='11px Arial'; ctx.textAlign='left';
+  ctx.fillText('MOVE: Arrow Keys / WASD     JUMP: W or Up Arrow',15, canvas.height-50);
+  ctx.fillText('[E]: Pick up item      [SPACE]: Use held item',15, canvas.height-32);
+
+  // Title
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.8)';
+  ctx.fillRect(canvas.width/2-100,6,200,40);
+  let t=Date.now()*0.003;
+  ctx.fillStyle=`hsl(${(t*30)%360},100%,55%)`;
+  ctx.font='bold 24px "Arial Black",Arial';
+  ctx.textAlign='center';
+  ctx.fillText('JAILBREAK!!',canvas.width/2,38);
+  ctx.restore();
+
+  // Hint
+  if(hint.t>0) {
+    ctx.save();
+    ctx.globalAlpha=Math.min(1, hint.t/30);
+    ctx.fillStyle='rgba(0,0,0,0.8)';
+    ctx.fillRect(canvas.width/2-150,canvas.height/2-22,300,36);
+    ctx.fillStyle='#ffdd44';
+    ctx.font='bold 14px Arial'; ctx.textAlign='center';
+    ctx.fillText(hint.text, canvas.width/2, canvas.height/2+2);
+    ctx.restore();
+  }
+}
+
+function drawDrama() {
+  if(dramaText.t<=0||dramaText.lines.length===0) return;
+  let prog = 1 - dramaText.t/dramaText.maxT;
+  if(prog<0.08) return;
+  ctx.save();
+  ctx.translate(canvas.width/2, canvas.height*0.32);
+  let sc = Math.min(1.15, dramaText.scale);
+  ctx.scale(sc, sc);
+  for(let i=0;i<dramaText.lines.length;i++) {
+    let fs = i===0?46:28;
+    ctx.font=`bold ${fs}px "Arial Black",Arial`;
+    ctx.textAlign='center';
+    // Shadow
+    ctx.fillStyle='rgba(0,0,0,0.9)';
+    ctx.fillText(dramaText.lines[i],4,i*54+4);
+    ctx.fillStyle=dramaText.colors[i]||'#fff';
+    ctx.fillText(dramaText.lines[i],0,i*54);
+    // Outline
+    ctx.strokeStyle='rgba(0,0,0,0.6)';
+    ctx.lineWidth=3;
+    ctx.strokeText(dramaText.lines[i],0,i*54);
+  }
+  ctx.restore();
+}
+
+function drawEndScreen() {
+  if(gameState==='escaped') {
+    // Background flash
+    let p=(Math.sin(Date.now()*0.004)+1)/2;
+    ctx.fillStyle=`rgba(255,200,0,${0.08+p*0.08})`;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2-60);
+    let sc=1+Math.sin(Date.now()*0.003)*0.05;
+    ctx.scale(sc,sc);
+    // Shadow
+    ctx.fillStyle='rgba(0,0,0,0.95)';
+    ctx.font='bold 68px "Arial Black",Arial';
+    ctx.textAlign='center';
+    ctx.fillText('JAILBREAK!!',5,5);
+    // Gold gradient
+    let g=ctx.createLinearGradient(-200,-30,200,30);
+    g.addColorStop(0,'#ffcc00');
+    g.addColorStop(0.5,'#ffffff');
+    g.addColorStop(1,'#ff8800');
+    ctx.fillStyle=g;
+    ctx.fillText('JAILBREAK!!',0,0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2+20);
+    ctx.fillStyle='#ff4400'; ctx.font='bold 26px Arial'; ctx.textAlign='center';
+    ctx.fillText('YOU ARE FREE!!',0,0);
+    let method=escapeMethod==='hammer'?'Smashed the lock with your HAMMER!':
+               escapeMethod==='strength'?'PUNCHED through the bars with pure power!':
+               'Dug a tunnel to FREEDOM with your shovel!';
+    ctx.fillStyle='#ffffaa'; ctx.font='18px Arial';
+    ctx.fillText(method,0,34);
+    ctx.fillStyle='#aaaaaa'; ctx.font='16px Arial';
+    ctx.fillText('Press R to play again',0,68);
+    ctx.restore();
+  }
+
+  if(gameState==='caught') {
+    ctx.fillStyle='rgba(100,0,0,0.35)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2-40);
+    ctx.fillStyle='rgba(0,0,0,0.95)';
+    ctx.font='bold 64px "Arial Black",Arial'; ctx.textAlign='center';
+    ctx.fillText('BUSTED!!',4,4);
+    ctx.fillStyle='#cc0000';
+    ctx.fillText('BUSTED!!',0,0);
+    ctx.fillStyle='#ff8888'; ctx.font='bold 22px Arial';
+    ctx.fillText("The guard caught you!",0,48);
+    ctx.fillStyle='#aaa'; ctx.font='16px Arial';
+    ctx.fillText('Press R to try again',0,80);
+    ctx.restore();
+  }
+}
+
+function drawFreedomSign() {
+  // Draw a freedom marker
+  let [sx,sy]=worldToScreen(26*TSIZE, 14*TSIZE);
+  if(sx<-80||sx>canvas.width+80) return;
+  ctx.save();
+  ctx.fillStyle='#ffd700';
+  ctx.strokeStyle='#aa8800'; ctx.lineWidth=3;
+  // Post
+  ctx.fillStyle='#8B6914';
+  ctx.fillRect(sx+4,sy,8,5*TSIZE);
+  // Sign
+  ctx.fillStyle='#ffd700';
+  ctx.fillRect(sx-30,sy,80,36);
+  ctx.strokeStyle='#aa8800'; ctx.lineWidth=2; ctx.strokeRect(sx-30,sy,80,36);
+  ctx.fillStyle='#000';
+  ctx.font='bold 13px Arial'; ctx.textAlign='center';
+  ctx.fillText('FREEDOM',sx+10,sy+14);
+  ctx.fillText('THIS WAY →',sx+10,sy+30);
+  ctx.restore();
+}
+
+// ---- INTRO SCREEN ------------------------------------------
+function drawIntro() {
+  ctx.fillStyle='#0a0a1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Title
+  ctx.fillStyle='rgba(0,0,0,0.9)';
+  ctx.font='bold 72px "Arial Black",Arial'; ctx.textAlign='center';
+  ctx.fillText('JAILBREAK!!',canvas.width/2+4,130+4);
+  let g=ctx.createLinearGradient(0,60,0,130);
+  g.addColorStop(0,'#ffcc00'); g.addColorStop(1,'#ff4400');
+  ctx.fillStyle=g;
+  ctx.fillText('JAILBREAK!!',canvas.width/2,130);
+
+  ctx.fillStyle='#ff4400'; ctx.font='bold 22px Arial';
+  ctx.fillText('An Anime Prison Escape Adventure',canvas.width/2,172);
+
+  ctx.fillStyle='#ffeeaa'; ctx.font='bold 17px Arial';
+  ctx.fillText('You are trapped in jail. Use what you find to escape!',canvas.width/2,220);
+
+  // Item explanations
+  let items2=[
+    {color:'#ff6600',label:'POWER ORB',desc:'Use near the BARS → punch them all down!'},
+    {color:'#ffaa00',label:'HAMMER',desc:'Use near the LOCK → smash it open!'},
+    {color:'#44ff88',label:'SHOVEL',desc:'Use on the FLOOR → dig a secret tunnel!'},
+  ];
+  for(let i=0;i<3;i++) {
+    ctx.fillStyle='rgba(255,255,255,0.05)';
+    ctx.fillRect(canvas.width/2-280,260+i*58,560,50);
+    ctx.fillStyle=items2[i].color;
+    ctx.font='bold 16px Arial'; ctx.textAlign='left';
+    ctx.fillText('⬤ '+items2[i].label+':',canvas.width/2-265,287+i*58);
+    ctx.fillStyle='#ddd';
+    ctx.fillText(items2[i].desc,canvas.width/2-150,287+i*58);
+  }
+
+  ctx.fillStyle='#aaa'; ctx.font='16px Arial'; ctx.textAlign='center';
+  ctx.fillText('Watch out for the GUARD!',canvas.width/2,445);
+
+  let pulse=(Math.sin(Date.now()*0.004)+1)/2;
+  ctx.fillStyle=`rgba(255,${200+pulse*55|0},0,${0.7+pulse*0.3})`;
+  ctx.font='bold 20px Arial';
+  ctx.fillText('Press ANY KEY to start!',canvas.width/2,478);
+}
+
+let introShown = true;
+document.addEventListener('keydown', ()=>{
+  if(introShown) { introShown=false; resetGame(); }
+});
+
+function mainLoop() {
+  if(introShown) {
+    drawIntro();
+  } else {
+    update();
+    drawBg();
+    drawWorld();
+    drawParticles();
+    drawFreedomSign();
+    drawItems();
+    drawPerson(guard, true);
+    drawPerson(player, false);
+    drawFlash();
+    drawHUD();
+    drawDrama();
+    drawEndScreen();
+  }
+  requestAnimationFrame(mainLoop);
+}
+
+initWorld();
+initItems();
+initPlayer();
+initGuard();
+mainLoop();
+</script>
+</body>
+</html>

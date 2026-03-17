@@ -1,0 +1,1 @@
+import{a as r,f as a}from"../chunks/uDnvOX7r.js";import"../chunks/DUfuUbQM.js";import{t as m}from"../chunks/Bb-G5rkQ.js";var n=a('<h1>My Art</h1> <h2>Robots</h2> <img src="/art/2025/2025-05-11__robot.jpg"/>',1);function p(o){var t=n();m(4),r(o,t)}function i(o){p(o)}export{i as component};
